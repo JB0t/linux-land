@@ -1,13 +1,15 @@
 #!/bin/bash
 
 # Source various shell function groups
-source ~/bash_additions/bash_fs_extd.sh
-source ~/bash_additions/clctl.sh
-source ~/bash_additions/gitctl.sh
-source ~/bash_additions/git_ps1.sh
-# source ~/bash_additions/tfctl.sh
-source ~/bash_additions/bash_cmd_extd.sh
-source ~/bash_additions/fs_nav_extd.sh
-source ~/bash_additions/tx.sh
-source ~/bash_additions/md_notes.sh
-# source ~/bash_additions/aws_cli_extd.sh
+LINUX_LAND_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+source "$LINUX_LAND_DIR/bash_additions/bash_fs_extd.sh"
+source "$LINUX_LAND_DIR/bash_additions/clctl.sh"
+source "$LINUX_LAND_DIR/bash_additions/gitctl.sh"
+source "$LINUX_LAND_DIR/bash_additions/git_ps1.sh"
+# source "$LINUX_LAND_DIR/bash_additions/tfctl.sh"
+source "$LINUX_LAND_DIR/bash_additions/bash_cmd_extd.sh"
+source "$LINUX_LAND_DIR/bash_additions/fs_nav_extd.sh"
+source "$LINUX_LAND_DIR/bash_additions/tx.sh"
+source "$LINUX_LAND_DIR/bash_additions/md_notes.sh"
+# source "$LINUX_LAND_DIR/bash_additions/aws_cli_extd.sh"
+unset LINUX_LAND_DIR

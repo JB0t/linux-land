@@ -3,16 +3,18 @@
 # Requires: fs_nav_extd, tmux, nvim, $NOTES_DIR, $NVIM_BIN
 
 _genMdFile(){
-    filename=$1
-    additions=$2
+    local filename="$1"
+    local additions="${2:-}"
+    local title
+    title="$(basename "$filename")"
     if [ -f "$filename.md" ]; then
         echo "Note $filename.md already exists"
     else
         echo "Creating new note: $filename.md"
         touch "$filename.md"
-        printf "# ${filename//-/ }\n\n" > "$filename.md"
+        printf '# %s\n\n' "${title//-/ }" > "$filename.md"
         if [ -n "$additions" ]; then
-            printf "$additions\n\n" >> "$filename.md"
+            printf '%s\n\n' "$additions" >> "$filename.md"
         fi
     fi
 }
@@ -36,24 +38,39 @@ openmisc(){
 }
 
 opennotes() {
-    cmd="$1"
-    mkdir -p "$NOTES_DIR/$(date +%Y/%m/%d)" 2>/dev/null
-    if [ -z "$2" ]; then
-        filename=$(date +%Y-%m-%d)
+    local cmd="$1"
+    local note_name="${2:-}"
+    local daily_path
+    local relative_path
+    local filename
+
+    daily_path="$(date +%Y/%m/%d)"
+    if [[ -z "$note_name" ]]; then
+        relative_path="$daily_path/$(date +%Y-%m-%d)"
+    elif [[ "$note_name" == */* ]]; then
+        relative_path="$daily_path/${note_name%.md}"
     else
-        filename=${2// /-}
+        note_name="${note_name%.md}"
+        relative_path="$daily_path/${note_name// /-}"
     fi
-    cdnotestoday
+
+    if [[ "$relative_path" == /* || "/$relative_path/" == *"/../"* ]]; then
+        printf 'Note path must be relative to NOTES_DIR and cannot contain ..\n' >&2
+        return 2
+    fi
+
+    filename="$NOTES_DIR/$relative_path"
+    mkdir -p "$(dirname "$filename")"
     _genMdFile "$filename"
-    $cmd "$filename.md"
+    "$cmd" "$filename.md"
 }
 
 nvnotes() {
-    opennotes $NVIM_BIN "$1"
+    opennotes "$NVIM_BIN" "${1:-}"
 }
 
 codenotes() {
-    opennotes code "$1"
+    opennotes code "${1:-}"
 }
 
 notegrep() {
