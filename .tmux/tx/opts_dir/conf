@@ -1,0 +1,4 @@
+desc:
+    - "Opens the .tmux.conf file and then sources after it's closed."
+usage:
+    - "tx -c"

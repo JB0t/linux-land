@@ -1,0 +1,11 @@
+desc:
+    - "Bind a session to an available alt+[0-9] macro."
+    - "Pass either session name, bind number, both or none."
+    - "Missing args are collected via selectd menu."
+    - "Optionally -l to list the current binds."
+
+usage:
+    - "tx -b - Interactive select of session and bind number."
+    - "tx -b [s_name|num] [num|s_name] - bind session 's_name' to number 'num'."
+    - "'s_name' must be an active or persistent session."
+    - "'num' must be between 0-9."

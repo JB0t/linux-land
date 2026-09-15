@@ -1,0 +1,4 @@
+desc:
+    - "List all persistent sessions."
+usage:
+    - "tx -p"

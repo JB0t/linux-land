@@ -1,0 +1,6 @@
+desc:
+    - "Same as 'find' but optionally pass a directory."
+    - "If the directory name is already a session, switch to it. "
+usage:
+    - "tx -s - Same fuzzy search as 'tx -f'."
+    - "tx -s [path/to/dir] - create a session 'dir' in /full/path/to/dir."

@@ -1,0 +1,4 @@
+desc:
+    - "Display the help screen"
+usage:
+    - "tx -h"

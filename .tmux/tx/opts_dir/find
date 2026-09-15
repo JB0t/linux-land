@@ -1,0 +1,5 @@
+desc:
+    - "Fuzzy search a directory to open as a full session."
+    - "Parent directories searched is in ~/.bash_search_dirs."
+usage:
+    - "tx -f"

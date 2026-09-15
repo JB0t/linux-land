@@ -1,0 +1,4 @@
+desc:
+    - "Delete a persistent session (and the bind)"
+usage:
+    - "tx -d [s_name] - Delete 's_name' (leave black for selection)"

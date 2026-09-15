@@ -1,0 +1,58 @@
+- command: "-a | add"
+  description:
+    - "Add a session name/directory to persistent list."
+    - "No opts adds the current working directory."
+  options:
+    - "session_name:session_dir"
+- command: "-b | bind"
+  description:
+    - "Bind a session to an alt+[0-9] tmux macro."
+  options:
+    - "session_name"
+    - "bind_number"
+    - "-l (list current binds)"
+- command: "-c | create"
+  description:
+    - "Create a persistent tmux session definition."
+    - "The session name and directory may be supplied in either order."
+  options:
+    - "session_name"
+    - "session_dir"
+- command: "-d | delete"
+  description:
+    - "Delete a persistent session definition."
+  options:
+    - "session_name"
+- command: "-f | find"
+  description:
+    - "Select a persistent session and switch to it."
+  options: []
+- command: "-h | help"
+  description:
+    - "Display help for tx commands."
+  options:
+    - "command"
+- command: "-i | init"
+  description:
+    - "Create and initialize configured startup sessions."
+  options: []
+- command: "-l | load"
+  description:
+    - "Load a persistent session, or select one interactively."
+  options:
+    - "session_name"
+- command: "-p | print"
+  description:
+    - "Print all persistent session definitions."
+  options: []
+- command: "-s | session"
+  description:
+    - "Select a persistent session and switch to it."
+  options:
+    - "session_name"
+- command: "-u | unbind"
+  description:
+    - "Unbind a session from an alt+[0-9] tmux macro."
+  options:
+    - "session_name"
+    - "bind_number"

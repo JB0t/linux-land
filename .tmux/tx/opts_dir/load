@@ -1,0 +1,6 @@
+desc:
+    - "Load a persistent session (if not active)."
+    - "Optionally pass a session name."
+usage:
+    - "tx -l - select a session to load."
+    - "tx -l [s_name] - loads session with name 's_name' if exists."
