@@ -3,7 +3,7 @@
 # Requires: aws cli, fzf, aws-sso-util
 
 alogin(){
-    "not implemented"
+    aws-sso-util login default
 }
 
 _aws_profile_list(){

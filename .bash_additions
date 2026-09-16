@@ -11,5 +11,5 @@ source "$LINUX_LAND_DIR/bash_additions/bash_cmd_extd.sh"
 source "$LINUX_LAND_DIR/bash_additions/fs_nav_extd.sh"
 source "$LINUX_LAND_DIR/bash_additions/tx.sh"
 source "$LINUX_LAND_DIR/bash_additions/md_notes.sh"
-# source "$LINUX_LAND_DIR/bash_additions/aws_cli_extd.sh"
+source "$LINUX_LAND_DIR/bash_additions/aws_cli_extd.sh"
 unset LINUX_LAND_DIR
