@@ -80,38 +80,41 @@ gito(){
 }
 
 gitchromeopen(){
-    local repo
-    local org
-    if [ -z $1 ]; then
-        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            gito 
-            echo "Not a git repository."
-            return 1
-        fi
-        repo=$(basename "$PWD")
-        org=$(basename "$(dirname "$PWD")")
-    fi
-    if [[ $1 == *"/"* ]]; then
-        org=$(echo "$1" | awk -F/ '{print$1}')
-        repo=$(echo "$1" | awk -F/ '{print$2}')
+    local input="$1"
+    local orgrepo
+    # flat list of org/repo across all orgs, built once for scanning/fzf
+    local all_repos
+    all_repos=$(find "$GIT_ROOT_DIR" -mindepth 2 -maxdepth 2 -type d -printf '%P\n')
+
+    if [ -z "$input" ]; then
+        orgrepo=$(echo "$all_repos" | fzf)
     else
-        org=$(ls -d $GIT_ROOT_DIR/*/ | fzf)
-        if [ -z $org ]; then
-            echo "org cannot be empty"
-            return
-        fi
-        repo=$(ls -d $org/*/ | fzf)
-        if [ -z $repo ]; then
-            echo "repo cannot be empty"
-            return
+        local exact_matches
+        exact_matches=$(echo "$all_repos" | awk -F/ -v r="$input" '$2==r')
+        if [ "$(echo "$exact_matches" | grep -c .)" -eq 1 ]; then
+            orgrepo=$exact_matches
+        else
+            local partial_matches
+            partial_matches=$(echo "$all_repos" | grep "$input")
+            local pcount
+            pcount=$(echo "$partial_matches" | grep -c .)
+            if [ "$pcount" -eq 1 ]; then
+                orgrepo=$partial_matches
+            elif [ "$pcount" -gt 1 ]; then
+                orgrepo=$(echo "$partial_matches" | fzf)
+            else
+                echo "No matches found for '$input'"
+                return 1
+            fi
         fi
     fi
-    if [[ -z $org || -z $repo ]]; then
-        echo "org and repo cannot be empty"
+
+    if [ -z "$orgrepo" ]; then
+        echo "org/repo cannot be empty"
         return 1
     fi
-    echo "Opening repo $org/$repo in browser..."
-    google-chrome https://github.com/$org/$repo
+    echo "Opening repo $orgrepo in browser..."
+    google-chrome "https://github.com/$orgrepo"
 }
 
 gitcreatepr(){
