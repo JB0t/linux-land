@@ -25,7 +25,28 @@ return {
             builtin.grep_string({ search = vim.fn.input("Grep > ") })
         end)
         vim.keymap.set('n', '<leader>vh', builtin.help_tags, {})
-        vim.keymap.set('n', '<leader>pg', builtin.live_grep, {})
+        vim.keymap.set('n', '<leader>pG', builtin.live_grep, {})
+
+        -- Global content search including untracked/ignored files, skipping noisy dirs
+        vim.keymap.set('n', '<leader>pg', function()
+            builtin.live_grep({
+                additional_args = function()
+                    return {
+                        "--hidden",
+                        "--no-ignore",
+                        "--glob=!.git/*",
+                        "--glob=!.venv/*",
+                        "--glob=!venv/*",
+                        "--glob=!node_modules/*",
+                        "--glob=!.agents/*",
+                        "--glob=!*.key",
+                        "--glob=!.bash_history",
+                        "--glob=!.ssh/",
+                        "--glob=!.profile",
+                    }
+                end,
+            })
+        end)
     end
 }
 
