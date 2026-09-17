@@ -97,7 +97,7 @@ _clctl_completion() {
     local previous="${COMP_WORDS[COMP_CWORD - 1]}"
     local options="-h --help -t --tasks --configure --setup-cron --refresh-cache --time-start --time-stop --time-log --date --start --end --description --time-watch --interval --quiet --notes"
     local words=" ${COMP_WORDS[*]} "
-    local task_actions="get export print update create set-team start-timer stop-timer log-time watch-timers attach-file make-notes push-notes add-comment get-comments"
+    local task_actions="get list export print update create set-team open search start-timer stop-timer log-time watch-timers attach-file make-notes push-notes add-comment get-comments"
 
     if [[ "${COMP_WORDS[1]:-}" == "tasks" ]]; then
         local action="${COMP_WORDS[2]:-}"
@@ -130,6 +130,8 @@ _clctl_completion() {
         if [[ "$current" == --* ]]; then
             case "$action" in
                 get|export) COMPREPLY=( $(compgen -W "--assignee" -- "$current") ) ;;
+                list) COMPREPLY=( $(compgen -W "--assignee" -- "$current") ) ;;
+                open) COMPREPLY=( $(compgen -W "--task-id" -- "$current") ) ;;
                 start-timer) COMPREPLY=( $(compgen -W "--task-id" -- "$current") ) ;;
                 log-time) COMPREPLY=( $(compgen -W "--task-id --date --start --end --description" -- "$current") ) ;;
                 watch-timers) COMPREPLY=( $(compgen -W "--interval" -- "$current") ) ;;
