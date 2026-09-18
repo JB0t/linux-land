@@ -12,66 +12,6 @@ _clctl_run() {
 }
 
 clctl() {
-    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-        _clctl_run snakes/clis/clctl/clctl.py "$@"
-        printf '\nshell workflows:\n'
-        printf '  --notes [TASK] [--start]  Select a live assigned task, optionally start its timer, and open nvnotes\n'
-        return
-    fi
-
-    if [[ "${1:-}" == "--notes" ]]; then
-        shift
-        local task_id=""
-        local note_path=""
-        local selection=""
-        local start_timer=false
-
-        while (($#)); do
-            case "$1" in
-                --start)
-                    start_timer=true
-                    ;;
-                --*)
-                    printf 'Unknown clctl notes option: %s\n' "$1" >&2
-                    return 2
-                    ;;
-                *)
-                    if [[ -n "$task_id" ]]; then
-                        printf 'Only one task ID can be supplied to clctl --notes.\n' >&2
-                        return 2
-                    fi
-                    task_id="$1"
-                    ;;
-            esac
-            shift
-        done
-
-        printf 'Loading ClickUp task metadata...\n' >&2
-        if [[ -n "$task_id" ]]; then
-            selection="$(_clctl_run snakes/clis/clctl/clctl.py --select-task-live-note "$task_id")" || return
-        else
-            selection="$(_clctl_run snakes/clis/clctl/clctl.py --select-task-live-note)" || return
-        fi
-        task_id="${selection%%$'\t'*}"
-        note_path="${selection#*$'\t'}"
-
-        if [[ -z "$task_id" || -z "$note_path" || "$selection" != *$'\t'* ]]; then
-            printf 'Unable to read the selected ClickUp task metadata.\n' >&2
-            return 1
-        fi
-
-        if [[ "$start_timer" == true ]]; then
-            _clctl_run snakes/clis/clctl/clctl.py --time-start "$task_id" || return
-        fi
-
-        if ! declare -F nvnotes >/dev/null; then
-            printf 'nvnotes is unavailable. Source md_notes.sh before using clctl --notes.\n' >&2
-            return 1
-        fi
-        nvnotes "$note_path"
-        return
-    fi
-
     _clctl_run snakes/clis/clctl/clctl.py "$@"
 }
 
