@@ -196,3 +196,12 @@ gitpullall(){
     cd $workdir
 }
 
+updatenotes(){
+    workdir=$PWD
+    cd $NOTES_DIR
+    git add .
+    git commit -m "Update Notes"
+    git push
+    cd $workdir
+}
+

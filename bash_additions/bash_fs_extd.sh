@@ -50,17 +50,6 @@ yesterday(){
     fi
 }
 
-# TODO: Re-implement
-# clnotes() {
-#     if [ -z "$1" ]; then
-#         echo "Please provide a ClickUp task ID as an argument."
-#         return 1
-#     fi
-#     cdnotestoday
-#     _genMdFile "$1" "[ref](https://app.clickup.com/t/9005103887/$1)"
-#     $NVIM_BIN "$1.md"
-# }
-
 freplace(){
     search_term="$1"
     replace_term="$2"
