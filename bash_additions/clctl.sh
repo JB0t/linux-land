@@ -11,9 +11,12 @@ _clctl_run() {
     uv run --directory "$JB0T_SCRIPTS_DIR" python "$@"
 }
 
-clctl() {
-    _clctl_run snakes/clis/clctl/clctl.py "$@"
-}
+# Temporarily disabled while testing the Go clctl (~/.local/bin/clctl, built from
+# $JB0T_SCRIPTS_DIR/clis/clctl). Uncomment this and the `complete` line at the bottom
+# to go back to the Python version.
+# clctl() {
+#     _clctl_run snakes/clis/clctl/clctl.py "$@"
+# }
 
 cldocs() {
     _clctl_run snakes/clis/clctl/cldocs.py "$@"
@@ -37,7 +40,7 @@ _clctl_completion() {
     local previous="${COMP_WORDS[COMP_CWORD - 1]}"
     local options="-h --help -t --tasks --configure --setup-cron --refresh-cache --time-start --time-stop --time-log --date --start --end --description --time-watch --interval --quiet --notes"
     local words=" ${COMP_WORDS[*]} "
-    local task_actions="get list export print update create push-todo set-team set-status complete open search start-timer stop-timer log-time watch-timers attach-file make-notes push-notes add-comment get-comments"
+    local task_actions="get list export print update create push-todo set-team set-status complete open search start-timer stop-timer list-timers log-time watch-timers attach-file make-notes make-workspace push-notes add-comment get-comments"
 
     if [[ "${COMP_WORDS[1]:-}" == "tasks" ]]; then
         local action="${COMP_WORDS[2]:-}"
@@ -77,7 +80,8 @@ _clctl_completion() {
                 watch-timers) COMPREPLY=( $(compgen -W "--interval" -- "$current") ) ;;
                 attach-file) COMPREPLY=( $(compgen -W "--task-id --file" -- "$current") ) ;;
                 make-notes) COMPREPLY=( $(compgen -W "--task-id --start-timer" -- "$current") ) ;;
-                push-notes) COMPREPLY=( $(compgen -W "--task-id --file --dry-run" -- "$current") ) ;;
+                make-workspace) COMPREPLY=( $(compgen -W "--task-id" -- "$current") ) ;;
+                push-notes) COMPREPLY=( $(compgen -W "--task-id --file --date --all --select --dry-run" -- "$current") ) ;;
                 set-status) COMPREPLY=( $(compgen -W "--task-id --status" -- "$current") ) ;;
                 complete) COMPREPLY=( $(compgen -W "--task-id" -- "$current") ) ;;
                 create) COMPREPLY=( $(compgen -W "--list-id --name --description --assignee-id --tag --yes" -- "$current") ) ;;
@@ -123,4 +127,8 @@ _clctl_completion() {
     COMPREPLY=( $(compgen -W "$options" -- "$current") )
 }
 
-complete -o bashdefault -o default -F _clctl_completion clctl
+# complete -o bashdefault -o default -F _clctl_completion clctl
+unset -f clctl 2>/dev/null
+if command -v clctl >/dev/null 2>&1; then
+    source <(clctl completion bash)
+fi
