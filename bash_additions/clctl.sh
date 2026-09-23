@@ -37,7 +37,7 @@ _clctl_completion() {
     local previous="${COMP_WORDS[COMP_CWORD - 1]}"
     local options="-h --help -t --tasks --configure --setup-cron --refresh-cache --time-start --time-stop --time-log --date --start --end --description --time-watch --interval --quiet --notes"
     local words=" ${COMP_WORDS[*]} "
-    local task_actions="get list export print update create set-team open search start-timer stop-timer log-time watch-timers attach-file make-notes push-notes add-comment get-comments"
+    local task_actions="get list export print update create push-todo set-team set-status complete open search start-timer stop-timer log-time watch-timers attach-file make-notes push-notes add-comment get-comments"
 
     if [[ "${COMP_WORDS[1]:-}" == "tasks" ]]; then
         local action="${COMP_WORDS[2]:-}"
@@ -77,7 +77,11 @@ _clctl_completion() {
                 watch-timers) COMPREPLY=( $(compgen -W "--interval" -- "$current") ) ;;
                 attach-file) COMPREPLY=( $(compgen -W "--task-id --file" -- "$current") ) ;;
                 make-notes) COMPREPLY=( $(compgen -W "--task-id --start-timer" -- "$current") ) ;;
-                push-notes) COMPREPLY=( $(compgen -W "--task-id --file" -- "$current") ) ;;
+                push-notes) COMPREPLY=( $(compgen -W "--task-id --file --dry-run" -- "$current") ) ;;
+                set-status) COMPREPLY=( $(compgen -W "--task-id --status" -- "$current") ) ;;
+                complete) COMPREPLY=( $(compgen -W "--task-id" -- "$current") ) ;;
+                create) COMPREPLY=( $(compgen -W "--list-id --name --description --assignee-id --tag --yes" -- "$current") ) ;;
+                push-todo) COMPREPLY=( $(compgen -W "--file --list-id --tag --dry-run" -- "$current") ) ;;
                 add-comment) COMPREPLY=( $(compgen -W "--task-id --comment --codeblock --bulletlist" -- "$current") ) ;;
                 get-comments) COMPREPLY=( $(compgen -W "--task-id --export" -- "$current") ) ;;
             esac
@@ -88,7 +92,7 @@ _clctl_completion() {
 
     case "$previous" in
         --tasks|-t)
-            COMPREPLY=( $(compgen -W "get export print update create quit" -- "$current") )
+            COMPREPLY=( $(compgen -W "$task_actions" -- "$current") )
             return
             ;;
         --interval)

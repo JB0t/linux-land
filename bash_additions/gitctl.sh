@@ -75,12 +75,20 @@ gito(){
         echo "repo cannot be empty"
         return
     fi
-    google-chrome https://github.com/$org${repo/\//}
+    chrome https://github.com/$org${repo/\//}
     cd $workdir
 }
 
 gitchromeopen(){
     local input="$1"
+    if [ -z $input ]; then
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            local orgrepo="$(basename $(realpath ../))/$(basename $PWD)"
+            echo "Opening repo $orgrepo in browser..."
+            chrome "https://github.com/$orgrepo"
+            return
+        fi
+    fi
     local orgrepo
     # flat list of org/repo across all orgs, built once for scanning/fzf
     local all_repos
@@ -114,7 +122,7 @@ gitchromeopen(){
         return 1
     fi
     echo "Opening repo $orgrepo in browser..."
-    google-chrome "https://github.com/$orgrepo"
+    chrome "https://github.com/$orgrepo"
 }
 
 gitcreatepr(){
@@ -175,15 +183,23 @@ gitcreatepr(){
 #     git branch -vv | awk '/: gone]/{print $1}' | xargs git branch -D
 # }
 
+_select_local_org(){
+    local org
+    org=$(ls -d $GIT_ROOT_DIR/* | awk -F/ '{print $NF}' | fzf)
+    if [ -z $org ]; then
+        echo 1
+    fi
+    echo $org
+}
+
 gitpullall(){
     workdir=$PWD
-    cd $GIT_ROOT_DIR
-    org=$(ls -d */ | fzf)
-    if [ -z $org ]; then
+    local org=$(_select_local_org)
+    if [ $org == 1 ]; then
         echo "org cannot be empty"
         return
     fi
-    cd $org
+    cd $GIT_ROOT_DIR/$org
     for repo in ./*; do
         if [ -d $repo ]; then
             cd "$repo"
@@ -193,6 +209,18 @@ gitpullall(){
             cd ../
         fi
     done
+    cd $workdir
+}
+
+clonerepos(){
+    workdir=$PWD
+    local org=$(_select_local_org)
+    if [ $org == 1 ]; then
+        echo "org cannot be empty"
+        return
+    fi
+    cd $GIT_ROOT_DIR/$org
+    gh repo list $org -L 600 | awk -v ORG=$org '$1 ~ ORG{print$1}' | xargs -I {} sh -c 'echo "cloning {}.."; gh repo clone "{}" 2>/dev/null || true'
     cd $workdir
 }
 
