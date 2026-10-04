@@ -22,11 +22,12 @@
         remote_src: true
         mode: preserve
 
+# No mode: existing dirs keep their permissions (~/.config is often 0700),
+# new ones follow the umask.
 - name: Create directories
-  ansible.builtin.file:
+  ansible.builtin.file:  # noqa: risky-file-permissions
     path: "{{ item }}"
     state: directory
-    mode: "0755"
   loop:
     - "{{ home }}/.config"
     - "{{ home }}/.tmux/tx/sessions/init"

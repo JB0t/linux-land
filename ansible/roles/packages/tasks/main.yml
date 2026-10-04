@@ -1,8 +1,17 @@
 ---
-- name: Install apt packages
+# Only touch apt (and refresh its cache) when something is missing, so a
+# broken third-party repo doesn't block a machine that already has it all.
+- name: List installed packages
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: Install missing apt packages
+  vars:
+    missing: "{{ apt_packages | reject('in', ansible_facts['packages']) | list }}"
+  when: missing | length > 0
   become: true
   ansible.builtin.apt:
-    name: "{{ apt_packages }}"
+    name: "{{ missing }}"
     state: present
     update_cache: true
     cache_valid_time: 3600

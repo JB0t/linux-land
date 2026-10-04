@@ -134,10 +134,9 @@
   check_mode: false
 
 - name: Create the nvm dir
-  ansible.builtin.file:
+  ansible.builtin.file:  # noqa: risky-file-permissions
     path: "{{ nvm_dir }}"
     state: directory
-    mode: "0755"
 
 - name: Install nvm {{ nvm_version }}
   when: nvm_installed.rc != 0 or 'v' ~ nvm_installed.stdout != nvm_version
@@ -150,10 +149,19 @@
     NVM_DIR: "{{ nvm_dir }}"
     PROFILE: /dev/null
 
+# A new Node version starts with no global npm packages; carry them over
+# from the current default so CLIs installed with npm -g don't vanish.
 - name: Install Node {{ node_version }}
-  ansible.builtin.shell: >-
-    . "{{ nvm_dir }}/nvm.sh" &&
-    nvm install {{ '--lts' if node_version == 'lts' else node_version }} 2>&1
+  ansible.builtin.shell: |
+    . "{{ nvm_dir }}/nvm.sh"
+    want=$(nvm version-remote {{ '--lts' if node_version == 'lts' else node_version }})
+    if [ "$(nvm version "$want")" = "$want" ]; then
+        echo "$want is already installed."
+        exit 0
+    fi
+    from=""
+    case "$(nvm current)" in v*) from="--reinstall-packages-from=$(nvm current)" ;; esac
+    nvm install "$want" $from 2>&1
   args:
     executable: /bin/bash
   register: node_install
@@ -185,7 +193,6 @@
 
 # git prompt helper, sourced by bash_additions/git_ps1.sh
 - name: Download git-prompt.sh
-  ansible.builtin.get_url:
+  ansible.builtin.get_url:  # noqa: risky-file-permissions
     url: https://raw.githubusercontent.com/git/git/master/contrib/completion/git-prompt.sh
     dest: "{{ home }}/.git-prompt.sh"
-    mode: "0644"
