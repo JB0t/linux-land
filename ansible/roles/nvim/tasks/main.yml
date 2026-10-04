@@ -1,0 +1,118 @@
+---
+- name: Read the default Node bin dir
+  ansible.builtin.shell: '. "{{ nvm_dir }}/nvm.sh" && dirname "$(nvm which default)"'
+  args:
+    executable: /bin/bash
+  register: nvim_node_bin
+  changed_when: false
+  check_mode: false
+
+- name: Set the PATH nvim's plugins build and run with
+  ansible.builtin.set_fact:
+    nvim_env_path: "{{ nvim_dir }}/bin:{{ nvim_node_bin.stdout }}:/usr/local/go/bin:{{ home }}/go/bin:{{ ansible_facts['env'].PATH }}"
+
+# Plugins at the commits pinned in nvim/lazy-lock.json. Lazy rewrites the
+# lockfile from whatever is checked out, so a plugin that couldn't switch
+# (e.g. a branch change) leaves it dirty; if it was clean beforehand, put it
+# back and restore once more.
+- name: Check whether nvim/lazy-lock.json has local changes
+  ansible.builtin.command: git -C "{{ linux_land_dir }}" status --porcelain -- nvim/lazy-lock.json
+  register: lock_before
+  changed_when: false
+  check_mode: false
+
+# lazy_init.lua bootstraps lazy.nvim from its stable branch, and restore
+# doesn't move lazy.nvim itself, so put it at the pinned commit first.
+- name: Read nvim/lazy-lock.json
+  ansible.builtin.slurp:
+    src: "{{ linux_land_dir }}/nvim/lazy-lock.json"
+  register: lazy_lock
+
+- name: Check out lazy.nvim at the pinned commit
+  ansible.builtin.git:
+    repo: https://github.com/folke/lazy.nvim.git
+    dest: "{{ home }}/.local/share/nvim/lazy/lazy.nvim"
+    version: "{{ (lazy_lock.content | b64decode | from_json)['lazy.nvim'].commit }}"
+
+- name: Record plugin commits before restoring
+  ansible.builtin.shell: &plugin_heads >-
+    for d in "{{ home }}"/.local/share/nvim/lazy/*/; do
+    [ -d "$d" ] && printf '%s %s\n' "$(basename "$d")" "$(git -C "$d" rev-parse HEAD 2>/dev/null)";
+    done; true
+  args:
+    executable: /bin/bash
+  register: heads_before
+  changed_when: false
+  check_mode: false
+
+- name: Restore nvim plugins from the lockfile
+  ansible.builtin.command: nvim --headless "+Lazy! clean" "+Lazy! restore" +qa
+  environment:
+    PATH: "{{ nvim_env_path }}"
+  changed_when: false
+
+- name: Check whether the restore left the lockfile dirty
+  ansible.builtin.command: git -C "{{ linux_land_dir }}" status --porcelain -- nvim/lazy-lock.json
+  register: lock_after
+  changed_when: false
+  check_mode: false
+
+- name: Put the lockfile back and restore again
+  when: lock_before.stdout == '' and lock_after.stdout != ''
+  block:
+    - name: Reset nvim/lazy-lock.json
+      ansible.builtin.command: git -C "{{ linux_land_dir }}" checkout -- nvim/lazy-lock.json
+      changed_when: false
+
+    - name: Restore nvim plugins from the lockfile (second pass)
+      ansible.builtin.command: nvim --headless "+Lazy! restore" +qa
+      environment:
+        PATH: "{{ nvim_env_path }}"
+      changed_when: false
+
+- name: Record plugin commits after restoring
+  ansible.builtin.shell: *plugin_heads
+  args:
+    executable: /bin/bash
+  register: heads_after
+  changed_when: heads_after.stdout != heads_before.stdout
+  check_mode: false
+
+# LSP servers and debugger
+- name: Check for Mason packages
+  ansible.builtin.stat:
+    path: "{{ home }}/.local/share/nvim/mason/bin/{{ item.value }}"
+  loop: "{{ mason_packages | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: mason_bins
+
+- name: Install missing Mason packages
+  vars:
+    missing: "{{ mason_bins.results | rejectattr('stat.exists') | map(attribute='item.key') | list }}"
+  when: missing | length > 0
+  ansible.builtin.command:
+    argv: [nvim, --headless, "+MasonInstall {{ missing | join(' ') }}", +qa]
+  environment:
+    PATH: "{{ nvim_env_path }}"
+
+# Treesitter parsers (the config also installs these, but asynchronously)
+- name: Check for treesitter parsers
+  ansible.builtin.stat:
+    path: "{{ home }}/.local/share/nvim/site/parser/{{ item }}.so"
+  loop: "{{ treesitter_parsers }}"
+  register: ts_parsers
+
+- name: Install missing treesitter parsers
+  vars:
+    missing: "{{ ts_parsers.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+  when: missing | length > 0
+  ansible.builtin.command:
+    argv:
+      - nvim
+      - --headless
+      - -c
+      - "lua require('nvim-treesitter').install({ '{{ missing | join(\"', '\") }}' }):wait(600000)"
+      - +qa
+  environment:
+    PATH: "{{ nvim_env_path }}"

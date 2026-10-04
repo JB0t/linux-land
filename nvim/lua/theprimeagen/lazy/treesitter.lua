@@ -2,63 +2,56 @@ return {
 	{
 		"nvim-treesitter/nvim-treesitter",
 		branch = "main",
+		lazy = false, -- main branch does not support lazy-loading
 		build = ":TSUpdate",
 		config = function()
-			-- Explicitly set parser install directory for snap compatibility
-			local parser_install_dir = vim.fn.stdpath("data") .. "/treesitter"
-			vim.fn.mkdir(parser_install_dir, "p")
+			local ts = require("nvim-treesitter")
+			-- Default install_dir is stdpath("data")/site, already on runtimepath
+			ts.setup({})
 
-			require("nvim-treesitter.config").setup({
-				parser_install_dir = parser_install_dir,
-
-				-- Auto-install these on startup so injected code-block highlighting (e.g. python in markdown) works
-				ensure_installed = {
-					"vimdoc", "lua", "bash", "go", "python", "javascript", "typescript",
-					"json", "yaml", "c", "markdown", "markdown_inline",
-				},
-
-				-- Sync install only matters when ensure_installed has parsers listed
-				sync_install = false,
-
-				indent = {
-					enable = true,
-				},
-
-				highlight = {
-					-- `false` will disable the whole extension
-					enable = true,
-					disable = function(lang, buf)
-						if lang == "html" or lang == "help" or lang == "vimdoc" then
-							if lang == "html" then
-								print("disabled")
-							end
-							return true
-						end
-
-						local max_filesize = 100 * 1024 -- 100 KB
-						local ok, stats = pcall(vim.loop.fs_stat, vim.api.nvim_buf_get_name(buf))
-						if ok and stats and stats.size > max_filesize then
-							vim.notify(
-								"File larger than 100KB treesitter disabled for performance",
-								vim.log.levels.WARN,
-								{ title = "Treesitter" }
-							)
-							return true
-						end
-					end,
-
-					-- Setting this to true will run `:h syntax` and tree-sitter at the same time.
-					-- Set this to `true` if you depend on "syntax" being enabled (like for indentation).
-					-- Using this option may slow down your editor, and you may see some duplicate highlights.
-					-- Instead of true it can also be a list of languages
-					additional_vim_regex_highlighting = { "markdown" },
-				},
+			-- No-op for parsers already installed; builds missing ones in the background
+			ts.install({
+				"vimdoc", "lua", "bash", "go", "python", "javascript", "typescript",
+				"json", "yaml", "c", "markdown", "markdown_inline",
 			})
 
 			vim.treesitter.language.register("templ", "templ")
 
-			-- Add parser directory to Neovim's runtime path for snap compatibility
-			vim.opt.runtimepath:append(parser_install_dir)
+			local skip_highlight = { html = true, help = true, vimdoc = true }
+			local max_filesize = 100 * 1024 -- 100 KB
+
+			vim.api.nvim_create_autocmd("FileType", {
+				group = vim.api.nvim_create_augroup("ThePrimeagenTreesitter", { clear = true }),
+				callback = function(args)
+					local buf = args.buf
+					local lang = vim.treesitter.language.get_lang(args.match) or args.match
+					if skip_highlight[lang] then
+						return
+					end
+
+					local ok, stats = pcall(vim.uv.fs_stat, vim.api.nvim_buf_get_name(buf))
+					if ok and stats and stats.size > max_filesize then
+						vim.notify(
+							"File larger than 100KB treesitter disabled for performance",
+							vim.log.levels.WARN,
+							{ title = "Treesitter" }
+						)
+						return
+					end
+
+					-- Fails quietly when no parser is installed for this filetype
+					if not pcall(vim.treesitter.start, buf, lang) then
+						return
+					end
+
+					vim.bo[buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+
+					-- Keep regex syntax alongside treesitter where we rely on it
+					if lang == "markdown" then
+						vim.bo[buf].syntax = "ON"
+					end
+				end,
+			})
 		end,
 	},
 

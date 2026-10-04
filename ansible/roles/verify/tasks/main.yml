@@ -1,0 +1,76 @@
+---
+# Read-only checks that the machine ended up working. Nothing here changes
+# anything; a failure means setup did not do its job.
+- name: Check every tool runs
+  ansible.builtin.shell: |
+    . "{{ nvm_dir }}/nvm.sh"
+    set -e
+    export PATH="{{ nvim_dir }}/bin:/usr/local/go/bin:{{ home }}/.fzf/bin:$PATH"
+    for cmd in "nvim --version" "go version" "node --version" "fzf --version" \
+               "yq --version" "tree-sitter --version" "tmux -V"; do
+      printf '%-12s %s\n' "${cmd%% *}" "$($cmd | head -1)"
+    done
+  args:
+    executable: /bin/bash
+  changed_when: false
+  check_mode: false
+  register: tool_versions
+
+- name: Show tool versions
+  ansible.builtin.debug:
+    msg: "{{ tool_versions.stdout_lines }}"
+
+- name: Check every link points into this repo
+  ansible.builtin.stat:
+    path: "{{ home }}/{{ item.dest }}"
+    follow: false
+  loop: "{{ dotfile_links }}"
+  loop_control:
+    label: "~/{{ item.dest }}"
+  register: links
+  failed_when: >-
+    not links.stat.islnk | default(false)
+    or links.stat.lnk_source != linux_land_dir ~ '/' ~ item.src
+  when: not ansible_check_mode
+
+- name: Check a new interactive shell loads cleanly
+  ansible.builtin.command:
+    argv: [bash, -ic, "type tx cdto nvim >/dev/null && echo OK"]
+  register: shell_check
+  changed_when: false
+  check_mode: false
+  failed_when: shell_check.rc != 0 or shell_check.stdout_lines[-1] | default('') != 'OK'
+  when: not ansible_check_mode
+
+- name: Check nvim starts cleanly and highlights Go with treesitter
+  ansible.builtin.shell: |
+    # Same PATH a new shell gets from ~/.bashrc (Go, Node)
+    export PATH="/usr/local/go/bin:{{ home }}/go/bin:$PATH"
+    . "{{ nvm_dir }}/nvm.sh"
+    set -e
+    dir=$(mktemp -d)
+    trap 'rm -rf "$dir"' EXIT
+    printf 'package main\n\nfunc main() {}\n' > "$dir/main.go"
+    cd "$dir"
+    "{{ nvim_dir }}/bin/nvim" --headless main.go "+lua vim.defer_fn(function()
+      local hl = vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] ~= nil
+      io.stdout:write('treesitter=' .. tostring(hl) .. '\n')
+      io.stdout:write(vim.fn.execute('messages'))
+      vim.cmd('qa!')
+    end, 2000)"
+  args:
+    executable: /bin/bash
+  register: nvim_check
+  changed_when: false
+  check_mode: false
+  failed_when: >-
+    nvim_check.rc != 0
+    or 'treesitter=true' not in nvim_check.stdout
+    or 'rror' in nvim_check.stdout ~ nvim_check.stderr
+  when: not ansible_check_mode
+
+- name: Check setup left nvim/lazy-lock.json as it found it
+  ansible.builtin.stat:
+    path: "{{ linux_land_dir }}/nvim/lazy-lock.json"
+  register: lockfile_at_end
+  failed_when: lockfile_at_end.stat.checksum != lockfile_at_start.stat.checksum

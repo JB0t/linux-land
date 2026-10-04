@@ -1,0 +1,66 @@
+---
+# ~/.tmux stays a real, per-machine dir (tpm plugins, tx sessions); only
+# tx's opts are linked from the repo. Older setups symlinked ~/.tmux to the
+# repo: move that link aside and carry its tx sessions over.
+- name: Inspect ~/.tmux
+  ansible.builtin.stat:
+    path: "{{ home }}/.tmux"
+    follow: false
+  register: tmux_dir
+
+- name: Migrate a symlinked ~/.tmux to a real dir
+  when: tmux_dir.stat.islnk | default(false)
+  block:
+    - name: Move the ~/.tmux symlink aside
+      ansible.builtin.command: mv "{{ home }}/.tmux" "{{ home }}/.tmux{{ backup_suffix }}"
+      changed_when: true
+
+    - name: Carry tx sessions over from the old ~/.tmux
+      ansible.builtin.copy:
+        src: "{{ home }}/.tmux{{ backup_suffix }}/tx/sessions/"
+        dest: "{{ home }}/.tmux/tx/sessions/"
+        remote_src: true
+        mode: preserve
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ home }}/.config"
+    - "{{ home }}/.tmux/tx/sessions/init"
+    - "{{ home }}/.tmux/tx/sessions/normal"
+    - "{{ notes_dir }}"
+
+- name: Link dotfiles into $HOME
+  ansible.builtin.include_tasks: link.yml
+  loop: "{{ dotfile_links }}"
+  loop_control:
+    loop_var: link
+    label: "~/{{ link.dest }}"
+
+# Per-machine files: seeded once, never overwritten
+- name: Seed ~/.bash_extras
+  ansible.builtin.template:
+    src: bash_extras.j2
+    dest: "{{ home }}/.bash_extras"
+    mode: "0644"
+    force: false
+
+- name: Seed ~/.bash_search_dirs
+  ansible.builtin.copy:
+    content: "{{ search_dirs | join(' ') }}\n"
+    dest: "{{ home }}/.bash_search_dirs"
+    mode: "0644"
+    force: false
+
+- name: Seed tx init sessions
+  ansible.builtin.copy:
+    content: "dir: {{ item.value }}\n"
+    dest: "{{ home }}/.tmux/tx/sessions/init/{{ item.key }}.yaml"
+    mode: "0644"
+    force: false
+  loop: "{{ tx_init_sessions | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

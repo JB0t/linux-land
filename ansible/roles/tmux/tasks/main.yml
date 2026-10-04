@@ -1,0 +1,19 @@
+---
+# tpm treats an existing empty plugin dir as installed, so clear any out
+# (left by older checkouts that tracked plugins as empty gitlinks).
+- name: Remove empty tmux plugin dirs
+  ansible.builtin.command: find "{{ home }}/.tmux/plugins" -mindepth 1 -maxdepth 1 -type d -empty -print -delete
+  register: empty_plugins
+  changed_when: empty_plugins.stdout | length > 0
+  failed_when: false
+
+- name: Check out tpm
+  ansible.builtin.git:
+    repo: https://github.com/tmux-plugins/tpm
+    dest: "{{ home }}/.tmux/plugins/tpm"
+    update: false
+
+- name: Install tmux plugins
+  ansible.builtin.command: "{{ home }}/.tmux/plugins/tpm/bin/install_plugins"
+  register: tpm_install
+  changed_when: "'download success' in tpm_install.stdout"

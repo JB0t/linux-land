@@ -1,0 +1,2 @@
+# tpm owns this; plugins are cloned per machine
+.tmux/plugins/

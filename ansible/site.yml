@@ -1,0 +1,41 @@
+---
+- name: Set up linux-land
+  hosts: all
+  pre_tasks:
+    - name: Check this machine is supported
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['pkg_mgr'] == 'apt'
+          - ansible_facts['architecture'] in arch_names
+          - ansible_facts['user_id'] != 'root'
+        fail_msg: >-
+          linux-land supports apt-based systems on x86_64 or aarch64, run as a
+          normal user with sudo. Found {{ ansible_facts['distribution'] }} with
+          {{ ansible_facts['pkg_mgr'] }} on {{ ansible_facts['architecture'] }} as {{ ansible_facts['user_id'] }}.
+        quiet: true
+      tags: always
+
+    - name: Work out paths and host details
+      ansible.builtin.set_fact:
+        home: "{{ ansible_facts['user_dir'] }}"
+        linux_land_dir: "{{ playbook_dir | dirname | realpath }}"
+        arch: "{{ arch_names[ansible_facts['architecture']] }}"
+        is_wsl: "{{ 'microsoft' in ansible_facts['kernel'] | lower }}"
+        nvim_dir: "/opt/nvim-linux-{{ arch_names[ansible_facts['architecture']].nvim }}"
+        nvm_dir: "{{ ansible_facts['user_dir'] }}/.config/nvm"
+        backup_suffix: ".bak.{{ ansible_facts['date_time'].iso8601_basic_short }}"
+      tags: always
+
+    - name: Checksum nvim/lazy-lock.json before anything runs
+      ansible.builtin.stat:
+        path: "{{ linux_land_dir }}/nvim/lazy-lock.json"
+      register: lockfile_at_start
+      tags: always
+
+  roles:
+    - { role: packages, tags: [packages] }
+    - { role: tools, tags: [tools] }
+    - { role: dotfiles, tags: [dotfiles] }
+    - { role: tmux, tags: [tmux] }
+    - { role: nvim, tags: [nvim] }
+    - { role: verify, tags: [verify] }
