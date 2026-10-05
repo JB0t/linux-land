@@ -124,3 +124,22 @@ vim.keymap.set("n", "<leader><leader>", function()
     vim.cmd("so")
 end)
 
+-- Markdown specific keybindings for navigating headings
+-- Next heading based on exact count (e.g., 2]] jumps to next exact ##)
+vim.keymap.set('n', ']]', function()
+  local count = vim.v.count
+  local pattern = count > 0
+    and ('^' .. string.rep('#', count) .. '\\(#\\)\\@! ')
+    or  '^\\+# '
+  vim.fn.search(pattern, 'W')
+end, { buffer = true, desc = "Jump to next heading (exact count)" })
+
+-- Previous heading based on exact count (e.g., 2[[ jumps to previous exact ##)
+vim.keymap.set('n', '[[', function()
+  local count = vim.v.count
+  local pattern = count > 0
+    and ('^' .. string.rep('#', count) .. '\\(#\\)\\@! ')
+    or  '^\\+# '
+  vim.fn.search(pattern, 'bW')
+end, { buffer = true, desc = "Jump to previous heading (exact count)" })
+
