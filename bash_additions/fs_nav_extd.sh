@@ -19,6 +19,7 @@ _fzfdir(){
     fi
     candidates=""
     for dir in $(echo "$search_dirs"); do
+        dir="${dir/#\~/$HOME}"
         [[ -d "$dir" ]] || continue
         while IFS= read -r subdir; do
             candidates+="$subdir"$'\n'
