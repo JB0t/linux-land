@@ -1,0 +1,198 @@
+---
+# Each tool: work out the wanted version, read the installed one, and only
+# download when they differ.
+
+# Neovim, into /opt (found by .bashrc via $NVIM_BIN)
+- name: Resolve latest Neovim release
+  ansible.builtin.uri:
+    url: https://github.com/neovim/neovim/releases/latest
+    method: HEAD
+  register: nvim_latest
+  check_mode: false
+  when: nvim_version == 'latest'
+
+- name: Read installed Neovim version
+  ansible.builtin.command: "{{ nvim_dir }}/bin/nvim --version"
+  register: nvim_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install Neovim
+  vars:
+    nvim_tag: "{{ nvim_latest.url | basename if nvim_version == 'latest' else nvim_version }}"
+  when: nvim_installed.rc != 0 or nvim_installed.stdout_lines[0] != 'NVIM ' ~ nvim_tag
+  become: true
+  block:
+    - name: Remove old Neovim
+      ansible.builtin.file:
+        path: "{{ nvim_dir }}"
+        state: absent
+
+    - name: Download and unpack Neovim {{ nvim_tag }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/neovim/neovim/releases/download/{{ nvim_tag }}/nvim-linux-{{ arch.nvim }}.tar.gz"
+        dest: /opt
+        remote_src: true
+
+# Go, into /usr/local/go
+- name: Resolve latest Go release
+  ansible.builtin.uri:
+    url: "https://go.dev/VERSION?m=text"
+    return_content: true
+  register: go_latest
+  check_mode: false
+  when: go_version == 'latest'
+
+- name: Read installed Go version
+  ansible.builtin.command: /usr/local/go/bin/go env GOVERSION
+  register: go_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install Go
+  vars:
+    go_tag: "{{ go_latest.content.splitlines()[0] if go_version == 'latest' else go_version }}"
+  when: go_installed.rc != 0 or go_installed.stdout != go_tag
+  become: true
+  block:
+    - name: Remove old Go
+      ansible.builtin.file:
+        path: /usr/local/go
+        state: absent
+
+    - name: Download and unpack {{ go_tag }}
+      ansible.builtin.unarchive:
+        src: "https://go.dev/dl/{{ go_tag }}.linux-{{ arch.go }}.tar.gz"
+        dest: /usr/local
+        remote_src: true
+
+# yq (mikefarah's Go yq, used by tx; not the apt "yq" package)
+- name: Resolve latest yq release
+  ansible.builtin.uri:
+    url: https://github.com/mikefarah/yq/releases/latest
+    method: HEAD
+  register: yq_latest
+  check_mode: false
+  when: yq_version == 'latest'
+
+- name: Read installed yq version
+  ansible.builtin.command: /usr/local/bin/yq --version
+  register: yq_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install yq
+  vars:
+    yq_tag: "{{ yq_latest.url | basename if yq_version == 'latest' else yq_version }}"
+  when: yq_installed.rc != 0 or not yq_installed.stdout.endswith('version ' ~ yq_tag)
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/mikefarah/yq/releases/download/{{ yq_tag }}/yq_linux_{{ arch.yq }}"
+    dest: /usr/local/bin/yq
+    mode: "0755"
+    force: true
+
+# fzf (the apt one is too old for tx's --tmux popups)
+- name: Resolve latest fzf release
+  ansible.builtin.uri:
+    url: https://github.com/junegunn/fzf/releases/latest
+    method: HEAD
+  register: fzf_latest
+  check_mode: false
+  when: fzf_version == 'latest'
+
+- name: Check out fzf
+  ansible.builtin.git:
+    repo: https://github.com/junegunn/fzf.git
+    dest: "{{ home }}/.fzf"
+    version: "{{ fzf_latest.url | basename if fzf_version == 'latest' else fzf_version }}"
+    depth: 1
+  register: fzf_repo
+
+- name: Check for the fzf binary
+  ansible.builtin.stat:
+    path: "{{ home }}/.fzf/bin/fzf"
+  register: fzf_bin
+
+- name: Install fzf binary and shell integration
+  ansible.builtin.command: >-
+    {{ home }}/.fzf/install --key-bindings --completion --no-update-rc
+    --no-zsh --no-fish
+  when: fzf_repo is changed or not fzf_bin.stat.exists
+
+# Node via nvm (copilot, pyright, bashls and tree-sitter-cli need it)
+- name: Read installed nvm version
+  ansible.builtin.shell: '. "{{ nvm_dir }}/nvm.sh" && nvm --version'
+  args:
+    executable: /bin/bash
+  register: nvm_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Create the nvm dir
+  ansible.builtin.file:  # noqa: risky-file-permissions
+    path: "{{ nvm_dir }}"
+    state: directory
+
+- name: Install nvm {{ nvm_version }}
+  when: nvm_installed.rc != 0 or 'v' ~ nvm_installed.stdout != nvm_version
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/{{ nvm_version }}/install.sh | bash
+  args:
+    executable: /bin/bash
+  environment:
+    NVM_DIR: "{{ nvm_dir }}"
+    PROFILE: /dev/null
+
+# A new Node version starts with no global npm packages; carry them over
+# from the current default so CLIs installed with npm -g don't vanish.
+- name: Install Node {{ node_version }}
+  ansible.builtin.shell: |
+    . "{{ nvm_dir }}/nvm.sh"
+    want=$(nvm version-remote {{ '--lts' if node_version == 'lts' else node_version }})
+    if [ "$(nvm version "$want")" = "$want" ]; then
+        echo "$want is already installed."
+        exit 0
+    fi
+    from=""
+    case "$(nvm current)" in v*) from="--reinstall-packages-from=$(nvm current)" ;; esac
+    nvm install "$want" $from 2>&1
+  args:
+    executable: /bin/bash
+  register: node_install
+  changed_when: "'is already installed' not in node_install.stdout"
+
+- name: Read the default Node bin dir
+  ansible.builtin.shell: '. "{{ nvm_dir }}/nvm.sh" && dirname "$(nvm which default)"'
+  args:
+    executable: /bin/bash
+  register: node_bin
+  changed_when: false
+  check_mode: false
+
+# tree-sitter CLI: nvim-treesitter's main branch builds parsers with it
+- name: Check for tree-sitter-cli
+  ansible.builtin.command: npm ls -g --depth=0 tree-sitter-cli
+  environment:
+    PATH: "{{ node_bin.stdout }}:{{ ansible_facts['env'].PATH }}"
+  register: ts_cli
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install tree-sitter-cli
+  ansible.builtin.command: npm install -g tree-sitter-cli
+  environment:
+    PATH: "{{ node_bin.stdout }}:{{ ansible_facts['env'].PATH }}"
+  when: ts_cli.rc != 0
+
+# git prompt helper, sourced by bash_additions/git_ps1.sh
+- name: Download git-prompt.sh
+  ansible.builtin.get_url:  # noqa: risky-file-permissions
+    url: https://raw.githubusercontent.com/git/git/master/contrib/completion/git-prompt.sh
+    dest: "{{ home }}/.git-prompt.sh"

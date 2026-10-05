@@ -1,0 +1,39 @@
+name: setup
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fresh-ubuntu:
+    # A clean ubuntu:24.04 container, not the runner image, so nothing the
+    # playbook needs is preinstalled.
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install what a fresh machine needs before setup.sh
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git curl ca-certificates sudo
+
+      - uses: actions/checkout@v4
+
+      - name: Create a normal user with passwordless sudo
+        run: |
+          useradd -m -s /bin/bash tester
+          echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester
+          cp -a "$GITHUB_WORKSPACE" /home/tester/linux-land
+          chown -R tester: /home/tester/linux-land
+
+      - name: First run
+        run: sudo -iu tester /home/tester/linux-land/setup.sh
+
+      - name: Second run changes nothing
+        run: |
+          sudo -iu tester /home/tester/linux-land/setup.sh | tee second-run.log
+          grep -Eq 'changed=0 +unreachable=0 +failed=0' second-run.log

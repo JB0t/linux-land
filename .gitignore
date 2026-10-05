@@ -1,3 +1,5 @@
-/.tmux/plugins/tmux-resurrect/
-/.tmux/tx/snapshot/
+# tpm owns this; plugins are cloned per machine
+.tmux/plugins/
+.tmux/plugins/tmux-resurrect/
+.tmux/tx/snapshot/
 Session.vim

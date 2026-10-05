@@ -1,0 +1,11 @@
+# ~/.bash_extras: settings for this machine only (not tracked in linux-land).
+# Sourced by ~/.bashrc before ~/.bash_additions. Seeded by linux-land's
+# setup; edit freely, setup never overwrites it.
+#
+# Detected: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}, {{ ansible_facts['architecture'] }}{{ ', WSL' if is_wsl else '' }}
+
+# Where gitctl looks for <org>/<repo> checkouts
+GIT_ROOT_DIR="{{ git_root_dir }}"
+
+# Where md_notes / yesterday look for notes
+NOTES_DIR="{{ notes_dir }}"

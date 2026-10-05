@@ -1,0 +1,21 @@
+---
+# Link ~/<link.dest> to <repo>/<link.src>. Whatever is there already (a
+# file, a dir, or a link pointing elsewhere) is moved to <dest>.bak.<time>.
+- name: Inspect ~/{{ link.dest }}
+  ansible.builtin.stat:
+    path: "{{ home }}/{{ link.dest }}"
+    follow: false
+  register: link_dest
+
+- name: Back up ~/{{ link.dest }}
+  ansible.builtin.command: mv "{{ home }}/{{ link.dest }}" "{{ home }}/{{ link.dest }}{{ backup_suffix }}"
+  changed_when: true
+  when:
+    - link_dest.stat.exists
+    - not (link_dest.stat.islnk and link_dest.stat.lnk_source == linux_land_dir ~ '/' ~ link.src)
+
+- name: Link ~/{{ link.dest }}
+  ansible.builtin.file:
+    src: "{{ linux_land_dir }}/{{ link.src }}"
+    dest: "{{ home }}/{{ link.dest }}"
+    state: link

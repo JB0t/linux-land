@@ -1,0 +1,76 @@
+---
+# Versions. "latest" resolves the newest release on each run and only
+# downloads when it differs from what is installed. Pin a value (e.g.
+# v0.12.5, go1.27.1, v4.54.1) to make a machine reproducible.
+nvim_version: latest
+go_version: latest
+yq_version: latest
+fzf_version: latest
+nvm_version: v0.40.3
+node_version: lts            # "lts" or an exact version such as v24.13.0
+
+# Per-machine values, used only to seed files that don't exist yet
+# (~/.bash_extras, ~/.bash_search_dirs, tx init sessions). Override with
+# -e, e.g. ./setup.sh -e notes_dir=~/work/notes
+git_root_dir: "{{ home }}/git"
+notes_dir: "{{ home }}/notes"
+search_dirs:
+  - "{{ home }}/git"
+  - "{{ home }}/workspace"
+
+apt_packages:
+  - git
+  - curl
+  - ca-certificates
+  - unzip
+  - build-essential
+  - tmux
+  - xclip
+  - ripgrep
+  - fd-find
+  - jq
+  - python3-venv
+
+# Files and dirs in this repo, symlinked into $HOME
+dotfile_links:
+  - { src: .bashrc, dest: .bashrc }
+  - { src: .bash_additions, dest: .bash_additions }
+  - { src: bash_additions, dest: bash_additions }
+  - { src: .tmux.conf, dest: .tmux.conf }
+  - { src: .tmux/tx/opts, dest: .tmux/tx/opts }
+  - { src: .tmux/tx/opts_dir, dest: .tmux/tx/opts_dir }
+  - { src: nvim, dest: .config/nvim }
+
+# tx sessions created by `tx init`. Seeded once; sessions are per machine.
+tx_init_sessions:
+  notes: "{{ notes_dir }}"
+  linux-land: "{{ linux_land_dir }}"
+  git: "{{ git_root_dir }}"
+  playground: "{{ home }}"
+
+# Mason package -> binary it puts in mason/bin
+mason_packages:
+  lua-language-server: lua-language-server
+  gopls: gopls
+  bash-language-server: bash-language-server
+  pyright: pyright
+  delve: dlv
+
+treesitter_parsers:
+  - vimdoc
+  - lua
+  - bash
+  - go
+  - python
+  - javascript
+  - typescript
+  - json
+  - yaml
+  - c
+  - markdown
+  - markdown_inline
+
+# Release asset naming per CPU architecture
+arch_names:
+  x86_64: { nvim: x86_64, go: amd64, yq: amd64 }
+  aarch64: { nvim: arm64, go: arm64, yq: arm64 }
