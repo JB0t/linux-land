@@ -32,6 +32,12 @@ bak_path="/path/to/backup/object"
 mv $bak_path $this_dir/$( basename $bak_path) && ln -s $this_dir/$( basename $bak_path) $bak_path
 ```
 
+## Save and restore tmux work
+
+Install tmux-resurrect once by reloading tmux and pressing the tmux prefix followed by `I`. Start Neovim inside tmux at least once and let Lazy install `vim-obsession`; it keeps a `Session.vim` in each Neovim working directory for tmux-resurrect to reopen.
+
+Before restarting WSL, run `tx save`. After WSL starts and tmux is running again, run `tx restore`. Each save replaces the prior snapshot. The snapshot preserves tmux sessions, windows, panes, layouts, working directories, and Neovim sessions/open files. Neovim and k9s are restarted automatically; Claude runs `claude --continue` in each saved working directory, which resumes the latest conversation there rather than a captured session ID. Unsaved buffer edits are not a disk backup; write important changes before restarting.
+
 ## If you need to lift-and-shift your WSL
 
 ### Import/Export

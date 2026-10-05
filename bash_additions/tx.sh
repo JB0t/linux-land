@@ -62,6 +62,10 @@ tx(){
             tx_load "$@";;
         "print" | "-p")
             tx_print;;
+        "restore" | "-r")
+            tx_restore;;
+        "save")
+            tx_save;;
         "session" | "-s")
             tx_session "$@";;
         "unbind" | "-u")
@@ -76,7 +80,7 @@ _tx_completion(){
     current=${COMP_WORDS[COMP_CWORD]}
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "add bind create delete find help init load print session unbind" -- "$current") )
+        COMPREPLY=( $(compgen -W "add bind create delete find help init load print restore save session unbind" -- "$current") )
         return
     fi
 
@@ -366,6 +370,144 @@ tx_print(){
         echo "Dir:  $(yq '.dir' $TX_DIR/sessions/$session)"
     done
     echo "----"
+}
+
+_tx_resurrect_script(){
+    local script="$HOME/.tmux/plugins/tmux-resurrect/scripts/$1.sh"
+    if [ ! -x "$script" ]; then
+        echo "tmux-resurrect is not installed. Add it through TPM, then run prefix + I in tmux."
+        return 1
+    fi
+    printf '%s\n' "$script"
+}
+
+_tx_save_nvim_sessions(){
+    local panes pane_id pane_command pane_dir signal
+    panes=$(tmux list-panes -a -F '#{pane_id}|#{pane_current_command}|#{pane_current_path}') || return 1
+    while IFS='|' read -r pane_id pane_command pane_dir; do
+        case "$pane_command" in
+            nvim | nvim-*)
+                signal="tx-save-nvim-${pane_id//%/p}"
+                tmux wait-for -L "$signal" || return 1
+                if ! tmux send-keys -t "$pane_id" 'C-\' C-n; then
+                    tmux wait-for -U "$signal"
+                    return 1
+                fi
+                if ! tmux send-keys -t "$pane_id" -l ":silent! mksession! Session.vim | call system('tmux wait-for -U $signal')"; then
+                    tmux wait-for -U "$signal"
+                    return 1
+                fi
+                if ! tmux send-keys -t "$pane_id" Enter; then
+                    tmux wait-for -U "$signal"
+                    return 1
+                fi
+                if ! timeout 15s tmux wait-for -L "$signal"; then
+                    tmux wait-for -U "$signal"
+                    echo "Timed out saving Neovim session in pane $pane_id."
+                    return 1
+                fi
+                tmux wait-for -U "$signal" || return 1
+                if [ ! -s "$pane_dir/Session.vim" ]; then
+                    echo "Neovim did not write $pane_dir/Session.vim."
+                    return 1
+                fi
+                ;;
+        esac
+    done <<< "$panes"
+}
+
+tx_save(){
+    local script snapshot_dir last_snapshot pane_info pane_id pane_title save_status
+    local -a blank_title_panes=()
+    script=$(_tx_resurrect_script save) || return 1
+    snapshot_dir="$TX_DIR/snapshot"
+    tmux set-option -g @resurrect-dir "$snapshot_dir" || return 1
+    mkdir -p "$snapshot_dir"
+    _tx_save_nvim_sessions || return 1
+    pane_info=$(tmux list-panes -a -F '#{pane_id}|#{pane_title}') || return 1
+    while IFS='|' read -r pane_id pane_title; do
+        if [ -z "$pane_title" ]; then
+            if ! tmux select-pane -t "$pane_id" -T " "; then
+                for pane_id in "${blank_title_panes[@]}"; do
+                    tmux select-pane -t "$pane_id" -T ""
+                done
+                return 1
+            fi
+            blank_title_panes+=("$pane_id")
+        fi
+    done <<< "$pane_info"
+    save_status=0
+    bash "$script" || save_status=$?
+    for pane_id in "${blank_title_panes[@]}"; do
+        tmux select-pane -t "$pane_id" -T "" || return 1
+    done
+    [ "$save_status" -eq 0 ] || return "$save_status"
+    last_snapshot=$(readlink -f "$snapshot_dir/last") || {
+        echo "tmux-resurrect did not create the latest snapshot."
+        return 1
+    }
+    local -a snapshots=("$snapshot_dir"/tmux_resurrect_*.txt)
+    local snapshot
+    for snapshot in "${snapshots[@]}"; do
+        if [ -f "$snapshot" ] && [ "$snapshot" -ef "$last_snapshot" ]; then
+            continue
+        fi
+        rm -f -- "$snapshot"
+    done
+    echo "Saved the current tmux state to $last_snapshot"
+}
+
+tx_restore(){
+    local script target process directory current_command command
+    local app_count=0 started_count=0 running_count=0 missing_count=0
+    script=$(_tx_resurrect_script restore) || return 1
+    if [ ! -f "$TX_DIR/snapshot/last" ]; then
+        echo "No tmux snapshot found. Run 'tx save' before restarting WSL."
+        return 1
+    fi
+    tmux set-option -g @resurrect-dir "$TX_DIR/snapshot" || return 1
+    bash "$script" || return 1
+
+    while IFS=$'\t' read -r target process directory; do
+        if ! current_command=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null); then
+            printf "tx restore: saved pane %s is missing.\n" "$target" >&2
+            ((missing_count+=1))
+            continue
+        fi
+        ((app_count+=1))
+        if [ "$current_command" = "$process" ]; then
+            ((running_count+=1))
+            continue
+        fi
+        case "$current_command" in
+            bash | sh | zsh | fish)
+                case "$process" in
+                    nvim)
+                        [ -s "${directory#:}/Session.vim" ] || continue
+                        command='nvim -S' ;;
+                    claude)
+                        command='claude --continue' ;;
+                    k9s)
+                        command='k9s' ;;
+                    *)
+                        ((missing_count+=1))
+                        continue ;;
+                esac
+                if tmux send-keys -t "$target" -l "$command" && tmux send-keys -t "$target" Enter; then
+                    ((started_count+=1))
+                else
+                    printf "tx restore: could not start %s in %s.\n" "$process" "$target" >&2
+                    ((missing_count+=1))
+                fi
+                ;;
+            *)
+                printf "tx restore: left %s in %s unchanged (running %s).\n" "$process" "$target" "$current_command" >&2
+                ((missing_count+=1))
+                ;;
+        esac
+    done < <(awk -F '\t' '$1 == "pane" && ($10 == "nvim" || $10 == "claude" || $10 == "k9s") { printf "%s:%s.%s\t%s\t%s\n", $2, $3, $6, $10, $8 }' "$TX_DIR/snapshot/last")
+    printf "tx restore: %d saved app panes; %d already running, %d commands sent, %d unavailable.\n" "$app_count" "$running_count" "$started_count" "$missing_count"
+    [ "$missing_count" -eq 0 ]
 }
 
 tx_session(){
