@@ -82,10 +82,12 @@ notegrep() {
     fi
 }
 
-# Live content search over $NOTES_DIR (like telescope live_grep), opens the match in nvim
+# Live content search over $NOTES_DIR (like telescope live_grep), opens the match in $NVIM_BIN.
+# clctl's task workspaces (YYYY/MM/DD/workspaces/) only hold symlinks to notes found
+# elsewhere, so they are skipped: with --follow every linked note would match twice.
 search_notes() {
     local rg_cmd selection file line
-    rg_cmd="rg --line-number --column --no-heading --color=always --smart-case --follow --glob='!.git' --glob='!venv'"
+    rg_cmd="rg --line-number --column --no-heading --color=always --smart-case --follow --glob='!.git' --glob='!venv' --glob='!**/workspaces/**'"
     selection=$(cd "$NOTES_DIR" && : | fzf --ansi --disabled --query "$*" \
         --bind "start:reload:$rg_cmd -- {q} || true" \
         --bind "change:reload:sleep 0.1; $rg_cmd -- {q} || true" \
@@ -98,5 +100,5 @@ search_notes() {
         --preview-window 'right,60%') || return
     file=$(cut -d: -f1 <<<"$selection")
     line=$(cut -d: -f2 <<<"$selection")
-    nvim "+$line" "$NOTES_DIR/$file"
+    "${NVIM_BIN:-nvim}" "+$line" "$NOTES_DIR/$file"
 }
