@@ -5,6 +5,7 @@
 export TMUX_CONF=$HOME/.tmux.conf
 export TMUX_DIR=$HOME/.tmux
 export TX_DIR=$TMUX_DIR/tx
+_TX_SH=$(readlink -f "${BASH_SOURCE[0]}")
 
 _tx_all_sessions(){
     find $TX_DIR/sessions -type f | awk -F'sessions/' '{print$2}'
@@ -458,15 +459,37 @@ tx_save(){
 }
 
 tx_restore(){
-    local script target process directory current_command command
-    local app_count=0 started_count=0 running_count=0 missing_count=0
-    script=$(_tx_resurrect_script restore) || return 1
+    _tx_resurrect_script restore >/dev/null || return 1
     if [ ! -f "$TX_DIR/snapshot/last" ]; then
         echo "No tmux snapshot found. Run 'tx save' before restarting WSL."
         return 1
     fi
+    # On a fresh tmux server tmux-resurrect kills session "0" once the saved
+    # panes exist. Running the restore in this pane's shell died with it, so
+    # nothing was restarted until a second 'tx restore'. Run it from the tmux
+    # server instead so it survives losing this pane.
+    local log="$TX_DIR/snapshot/restore.log" restore_status=0
+    tmux run-shell "bash -c $(printf '%q' "source $(printf '%q' "$_TX_SH") && _tx_restore_run") >$(printf '%q' "$log") 2>&1" || restore_status=$?
+    cat "$log"
+    return "$restore_status"
+}
+
+_tx_restore_run(){
+    local script target process directory current_command command summary resurrect_processes restore_status=0
+    local app_count=0 started_count=0 running_count=0 missing_count=0
+    script=$(_tx_resurrect_script restore) || return 1
     tmux set-option -g @resurrect-dir "$TX_DIR/snapshot" || return 1
-    bash "$script" || return 1
+    # The loop below restarts the apps. tmux-resurrect would also type some of
+    # them into shells that are still starting, so they'd be launched twice.
+    resurrect_processes=$(tmux show-option -gqv @resurrect-processes)
+    tmux set-option -g @resurrect-processes false || return 1
+    bash "$script" || restore_status=$?
+    if [ -n "$resurrect_processes" ]; then
+        tmux set-option -g @resurrect-processes "$resurrect_processes"
+    else
+        tmux set-option -gu @resurrect-processes
+    fi
+    [ "$restore_status" -eq 0 ] || return "$restore_status"
 
     while IFS=$'\t' read -r target process directory; do
         if ! current_command=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null); then
@@ -506,7 +529,9 @@ tx_restore(){
                 ;;
         esac
     done < <(awk -F '\t' '$1 == "pane" && ($10 == "nvim" || $10 == "claude" || $10 == "k9s") { printf "%s:%s.%s\t%s\t%s\n", $2, $3, $6, $10, $8 }' "$TX_DIR/snapshot/last")
-    printf "tx restore: %d saved app panes; %d already running, %d commands sent, %d unavailable.\n" "$app_count" "$running_count" "$started_count" "$missing_count"
+    summary=$(printf "tx restore: %d saved app panes; %d already running, %d commands sent, %d unavailable." "$app_count" "$running_count" "$started_count" "$missing_count")
+    echo "$summary"
+    tmux display-message "$summary"
     [ "$missing_count" -eq 0 ]
 }
 

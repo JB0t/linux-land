@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Requires: fs_nav_extd, tmux, nvim, $NOTES_DIR, $NVIM_BIN
+# Requires: fs_nav_extd, tmux, nvim, fzf, rg, $NOTES_DIR, $NVIM_BIN
 
 _genMdFile(){
     local filename="$1"
@@ -80,4 +80,23 @@ notegrep() {
     else
         grep -r --exclude-dir='.git' --exclude-dir='venv' "$@" "$NOTES_DIR"
     fi
+}
+
+# Live content search over $NOTES_DIR (like telescope live_grep), opens the match in nvim
+search_notes() {
+    local rg_cmd selection file line
+    rg_cmd="rg --line-number --column --no-heading --color=always --smart-case --follow --glob='!.git' --glob='!venv'"
+    selection=$(cd "$NOTES_DIR" && : | fzf --ansi --disabled --query "$*" \
+        --bind "start:reload:$rg_cmd -- {q} || true" \
+        --bind "change:reload:sleep 0.1; $rg_cmd -- {q} || true" \
+        --delimiter : \
+        --prompt="  notes › " \
+        --layout=reverse \
+        --border=rounded \
+        --border-label=" search-notes " \
+        --preview "awk -v l={2} 'NR>=l-10 && NR<=l+10 {printf \"%s%5d  %s\033[0m\n\", (NR==l ? \"\033[1;33m\" : \"\"), NR, \$0}' {1}" \
+        --preview-window 'right,60%') || return
+    file=$(cut -d: -f1 <<<"$selection")
+    line=$(cut -d: -f2 <<<"$selection")
+    nvim "+$line" "$NOTES_DIR/$file"
 }

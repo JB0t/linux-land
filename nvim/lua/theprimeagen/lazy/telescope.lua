@@ -8,7 +8,15 @@ return {
     },
 
     config = function()
-        require('telescope').setup({})
+        -- rg skips symlinked files/dirs unless told to follow them
+        local follow_args = function() return { "--follow" } end
+        require('telescope').setup({
+            pickers = {
+                find_files = { follow = true },
+                live_grep = { additional_args = follow_args },
+                grep_string = { additional_args = follow_args },
+            },
+        })
 
         local builtin = require('telescope.builtin')
         vim.keymap.set('n', '<leader>pf', builtin.find_files, {})
@@ -34,6 +42,7 @@ return {
                     return {
                         "--hidden",
                         "--no-ignore",
+                        "--follow",
                         "--glob=!.git/*",
                         "--glob=!.venv/*",
                         "--glob=!venv/*",
