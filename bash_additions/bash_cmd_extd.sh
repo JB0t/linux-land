@@ -3,6 +3,50 @@
 # Requires: nvim, $NVIM_BIN, xclip
 
 alias copy='xclip -sel clip -r'
+
+# clip_text: the clipboard as text. xclip reads X's clipboard (on WSL, WSLg keeps it
+# in step with Windows'); when that is empty or there is no X display, Windows' own
+# clipboard is read through powershell.exe.
+clip_text() {
+    local text=""
+    if [[ -n "${DISPLAY:-}" ]] && command -v xclip >/dev/null; then
+        text="$(xclip -sel clip -o 2>/dev/null)"
+    fi
+    if [[ -z "$text" ]] && command -v powershell.exe >/dev/null; then
+        text="$(powershell.exe -NoProfile -NonInteractive -Command Get-Clipboard 2>/dev/null | tr -d '\r')"
+    fi
+    printf '%s' "$text"
+}
+
+# paste2: paste without the terminal's paste key (which TeamViewer can swallow).
+#   paste2      the clipboard on an editable command line: Enter runs it, Ctrl+C drops it
+#   paste2 -p   print the clipboard, e.g. paste2 -p > notes.md, paste2 -p | jq .
+# Alt+V inserts the clipboard at the cursor while typing any command.
+paste2() {
+    local text line
+    text="$(clip_text)"
+    if [[ "${1:-}" == -p ]]; then
+        printf '%s\n' "$text"
+        return
+    fi
+    if [[ -z "$text" ]]; then
+        echo "paste2: the clipboard is empty" >&2
+        return 1
+    fi
+    read -r -e -i "$text" -p "paste2> " line || return
+    [[ -n "$line" ]] || return 0
+    history -s "$line"
+    eval "$line"
+}
+
+_paste_at_cursor() {
+    local text
+    text="$(clip_text)"
+    READLINE_LINE="${READLINE_LINE:0:READLINE_POINT}${text}${READLINE_LINE:READLINE_POINT}"
+    READLINE_POINT=$((READLINE_POINT + ${#text}))
+}
+[[ $- == *i* ]] && bind -x '"\ev": _paste_at_cursor' 2>/dev/null
+
 alias sbash='source /home/${USER}/.bashrc'
 alias c='clear'
 

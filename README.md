@@ -79,37 +79,90 @@ Install tmux-resurrect once by reloading tmux and pressing the tmux prefix follo
 
 Before restarting WSL, run `tx save`. After WSL starts and tmux is running again, run `tx restore`. One run is enough even from a brand-new tmux server: the restore runs from the tmux server, so it survives tmux-resurrect closing the session you ran it in. Its output is also kept in `~/.tmux/tx/snapshot/restore.log`. Each save replaces the prior snapshot. The snapshot preserves tmux sessions, windows, panes, layouts, working directories, and Neovim sessions/open files. Neovim and k9s are restarted automatically; Claude runs `claude --continue` in each saved working directory, which resumes the latest conversation there rather than a captured session ID. Unsaved buffer edits are not a disk backup; write important changes before restarting.
 
-## If you need to lift-and-shift your WSL
+## Moving to another machine
 
-### Import/Export
+Two ways, depending on how much should come along.
 
-On the current machine:
+### A new Windows machine: prepare WSL
 
-```powershell
-# Probably Ubuntu-26.04
-wsl --list --verbose
-wsl --export Ubuntu-26.04 D:\backups\ubuntu-26.04.tar
-```
-
-On the new machine:
+From PowerShell on the new machine (download `windows/prepare-wsl.ps1` from this repo,
+or clone it on the Windows side):
 
 ```powershell
-wsl --import Ubuntu-26.04 C:\WSL\Ubuntu-26.04 D:\path\to\ubuntu-26.04.tar --version 2
+powershell -ExecutionPolicy Bypass -File .\prepare-wsl.ps1 -NerdFont JetBrainsMono
 ```
 
-Re-establish default login user:
+It installs WSL if missing (the first time it needs "Run as administrator" and a
+restart, then run it again), installs Ubuntu-24.04 (or the release in
+`-Snapshot machines\NAME\manifest.json`) and lets you create your user, writes
+`.wslconfig` if there is none (memory = RAM minus 8 GB, `autoMemoryReclaim=gradual`,
+`sparseVhd=true`), turns on systemd in `/etc/wsl.conf` (snap, cron and user services
+need it), then clones this repo and runs `./setup.sh`. Re-running it only does what
+is missing. `-SkipSetup` stops before the clone; `-ReplaceWslConfig` replaces an
+existing `.wslconfig` (after backing it up).
+
+### Copy the packages and tools another machine has
+
+`machine` (linked into `~/.local/bin` by setup) records what a machine has installed
+and installs what another one is missing. Both machines must run the same Ubuntu
+release on the same CPU architecture.
+
+On the machine that has everything:
+
+```bash
+machine snapshot --bundle        # writes machines/<hostname>/
+git -C ~/git/JB0t/linux-land add machines && git commit -m "snapshot"  && git push
+```
+
+It records:
+
+| What | How it comes back |
+| --- | --- |
+| apt packages you installed (not the OS's own), plus third-party apt sources and their keys | sources and keys added, packages installed |
+| `.deb` files installed by hand | from the bundle, if apt still had the file cached; otherwise listed |
+| snaps, flatpaks | installed with the same channel / remote |
+| pipx and uv tools, global npm packages, `cargo install` crates, `~/go/bin` | installed at the recorded versions (`--latest` for newest) |
+| files no package owns in `/opt`, `/usr/local/bin`, `~/.local/bin`; `~/.local/share/fonts` | copied from the bundle |
+| crontab, systemd user units | installed if this machine has none / lacks them |
+
+`machines/NAME/manifest.json` and the apt keys are for git. `--bundle` also archives
+the loose files and cached `.deb`s into `machines/NAME/bundle/`, which is gitignored
+(it can be gigabytes): copy that folder to the same place on the other machine
+yourself. The archive is written and read at most 50 MB/s (`MACHINE_RATE=20` for
+less) and kept out of the page cache, so big copies don't balloon WSL's memory.
+
+Before committing a snapshot of a work machine, check the diff: it lists third-party
+apt sources (which can name internal repositories) and includes your crontab.
+
+On the new machine, after `./setup.sh` (which installs Go, Node and the rest that the
+language tools need):
+
+```bash
+git pull                          # brings machines/NAME/; copy bundle/ in as well
+machine diff NAME                 # what this machine lacks; changes nothing
+machine restore NAME              # install it; asks for sudo once
+machine restore NAME --only apt,snap   # or one part at a time
+```
+
+`restore` only adds what is missing: it never removes anything or overwrites a file
+that exists, and leaves an apt source alone if this machine has a different one by
+the same name. It ends with what it added and what needs doing by hand (a `.deb` that
+wasn't bundled, a `go` binary built from local source, a crontab that differs).
+Symlinks that pointed into the old home folder are pointed at the new one, so the user
+names can differ. Run `machine diff` again at any time to check the two still match.
+
+### Move the whole distro instead
+
+Copies everything: files, packages, credentials. `windows/wsl-migrate.ps1` wraps
+`wsl --export` / `wsl --import`:
 
 ```powershell
-wsl -d Ubuntu-26.04 -u root
+# On the old machine
+.\wsl-migrate.ps1 -Export D:\backups\ubuntu-24.04.tar -Distro Ubuntu-24.04
+# On the new machine
+.\wsl-migrate.ps1 -Import D:\backups\ubuntu-24.04.tar -Distro Ubuntu-24.04 -User jstevens
 ```
 
-Add this to `/etc/wsl.conf`:
-
-```conf
-[user]
-default=jstevens
-```
-
-### Other
-
-* Copy `.wslconfig`
+Export stops the distro first and copies `.wslconfig` next to the archive; import
+registers it as WSL 2, makes `-User` the default login (an imported distro otherwise
+logs in as root) and installs the `.wslconfig` if the new machine has none.

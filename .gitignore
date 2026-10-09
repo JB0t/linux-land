@@ -3,3 +3,5 @@
 .tmux/plugins/tmux-resurrect/
 .tmux/tx/snapshot/
 Session.vim
+# machine snapshot --bundle: loose files and .debs, copied between machines by hand
+machines/*/bundle/

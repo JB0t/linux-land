@@ -40,6 +40,7 @@ dotfile_links:
   - { src: .tmux/tx/opts, dest: .tmux/tx/opts }
   - { src: .tmux/tx/opts_dir, dest: .tmux/tx/opts_dir }
   - { src: nvim, dest: .config/nvim }
+  - { src: bin/machine, dest: .local/bin/machine }
 
 # tx sessions created by `tx init`. Seeded once; sessions are per machine.
 tx_init_sessions:

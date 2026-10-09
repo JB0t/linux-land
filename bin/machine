@@ -1,0 +1,1025 @@
+#!/usr/bin/env python3
+"""Record what a machine has installed, and install what another machine is missing.
+
+    machine snapshot [--name NAME] [--bundle]   write machines/NAME/ in this repo
+    machine diff [SNAPSHOT]                     show what this machine lacks, change nothing
+    machine restore [SNAPSHOT] [--only ...]     install what this machine lacks
+
+A snapshot covers apt packages you installed (and the third-party apt sources and
+keys they come from), .deb files installed by hand, snaps, flatpaks, pipx and
+uv tools, global npm packages, cargo and go binaries, files no package owns in
+/opt, /usr/local/bin and ~/.local/bin, fonts in ~/.local/share/fonts, your
+crontab and systemd user units. machines/NAME/manifest.json and the apt files
+are meant for git; --bundle also archives the loose files and hand-installed
+.debs into machines/NAME/bundle/, which is gitignored: copy it across yourself.
+
+restore only adds what is missing and never overwrites a file that exists. It
+refuses a snapshot from another distro release or CPU architecture (--force to
+try anyway). Archives are written and read at most MACHINE_RATE MB/s (default
+50), and their pages are dropped from the page cache as they go, so copying
+gigabytes does not balloon WSL's memory.
+"""
+
+import argparse
+import fnmatch
+import gzip
+import json
+import os
+import platform
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+MACHINES = REPO / "machines"
+HOME = Path.home()
+SECTIONS = ["apt-sources", "apt", "debs", "snap", "flatpak", "pipx", "uv", "npm", "cargo", "go",
+            "files", "crontab", "systemd"]
+
+# Manually installed apt packages that only make sense on the machine they came from.
+APT_SKIP = [r"linux-(image|headers|modules|modules-extra|tools|cloud-tools)-.*", r"linux-generic.*",
+            r"linux-signed-.*", r"grub-.*", r"shim-signed", r".*-firmware", r"linux-firmware.*",
+            r"nvidia-.*", r"oem-.*"]
+SNAP_SKIP = {"core", "core18", "core20", "core22", "core24", "snapd", "bare", "snapd-desktop-integration"}
+# Runtime snaps that apps pull in by themselves (gnome-46-2404, mesa-2404, ...).
+SNAP_RUNTIME = re.compile(r"(gnome-\d.*|gtk-common-themes|mesa-\d.*|kf\d-.*|kde-.*-\d.*|qt\d.*-\d+)")
+NPM_SKIP = {"npm", "corepack"}
+# Installed and kept up to date by linux-land's own setup, so not copied.
+MANAGED = ["/opt/nvim-linux-*", "/usr/local/go", "/usr/local/bin/yq"]
+
+# ---------------------------------------------------------------------------------------
+# helpers
+
+
+def run(args, check=False, input=None, env=None):
+    """Runs a command, returning (exit code, stdout); a missing program gives 127."""
+    try:
+        result = subprocess.run(args, input=input, capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        return 127, ""
+    if check and result.returncode != 0:
+        raise RuntimeError(f"{' '.join(args)} failed: {result.stderr.strip()}")
+    return result.returncode, result.stdout
+
+
+def have(program):
+    return shutil.which(program) is not None
+
+
+def say(message=""):
+    print(message, flush=True)
+
+
+def note(message):
+    print(f"  {message}", file=sys.stderr, flush=True)
+
+
+def sudo(args):
+    return args if os.geteuid() == 0 else ["sudo"] + args
+
+
+def home_path(path):
+    """~/x for paths under $HOME, so snapshots move between user names."""
+    path = str(path)
+    home = str(HOME)
+    return "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
+
+
+def real_path(path):
+    return Path(os.path.expanduser(path))
+
+
+def os_release():
+    values = {}
+    for line in Path("/etc/os-release").read_text().splitlines():
+        key, _, value = line.partition("=")
+        values[key] = value.strip('"')
+    return values
+
+
+def dpkg_arch():
+    code, out = run(["dpkg", "--print-architecture"])
+    return out.strip() if code == 0 else platform.machine()
+
+
+def is_wsl():
+    return "microsoft" in platform.release().lower()
+
+
+class Throttle:
+    """Keeps a byte stream at or under MACHINE_RATE MB/s."""
+
+    def __init__(self):
+        self.rate = float(os.environ.get("MACHINE_RATE", "50")) * 1e6
+        self.started, self.done = time.monotonic(), 0
+
+    def __call__(self, count):
+        self.done += count
+        ahead = self.done / self.rate - (time.monotonic() - self.started)
+        if ahead > 0:
+            time.sleep(ahead)
+
+
+def evict(fd, upto):
+    """Drops a file's pages from the page cache (writing them out first)."""
+    try:
+        os.fdatasync(fd)
+    except OSError:
+        pass
+    os.posix_fadvise(fd, 0, upto, os.POSIX_FADV_DONTNEED)
+
+
+def pipe_to_file(command, path):
+    """Runs command and writes its stdout to path, throttled and without filling the cache."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+    throttle, done = Throttle(), 0
+    with open(path, "wb") as out:
+        while chunk := process.stdout.read(1 << 20):
+            out.write(chunk)
+            done += len(chunk)
+            throttle(len(chunk))
+            if done % (64 << 20) < (1 << 20):
+                out.flush()
+                evict(out.fileno(), done)
+        out.flush()
+        evict(out.fileno(), done)
+    if process.wait() != 0:
+        raise RuntimeError(f"{' '.join(command)} exited with {process.returncode}")
+    return done
+
+
+def file_to_pipe(path, command):
+    """Feeds path to command's stdin, throttled and without filling the cache."""
+    process = subprocess.Popen(command, stdin=subprocess.PIPE)
+    throttle, done = Throttle(), 0
+    with open(path, "rb") as source:
+        while chunk := source.read(1 << 20):
+            process.stdin.write(chunk)
+            done += len(chunk)
+            throttle(len(chunk))
+            if done % (64 << 20) < (1 << 20):
+                os.posix_fadvise(source.fileno(), 0, done, os.POSIX_FADV_DONTNEED)
+    process.stdin.close()
+    if process.wait() != 0:
+        raise RuntimeError(f"{' '.join(command)} exited with {process.returncode}")
+
+
+def size_of(path):
+    path = Path(path)
+    if path.is_symlink() or path.is_file():
+        return path.lstat().st_size
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += (Path(root) / name).lstat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def human(size):
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+
+
+# ---------------------------------------------------------------------------------------
+# snapshot
+
+
+def snap_apt_sources(out_dir):
+    """Third-party apt sources and the keys they are signed with (keys are public)."""
+    apt_dir = out_dir / "apt"
+    sources, keys = [], {}
+    shutil.rmtree(apt_dir, ignore_errors=True)
+    for path in sorted(Path("/etc/apt/sources.list.d").glob("*")):
+        if path.suffix not in (".list", ".sources") or path.name == "ubuntu.sources":
+            continue
+        text = path.read_text()
+        sources.append({"file": path.name, "text": text})
+        for key in re.findall(r"signed-by=([^\]\s]+)", text) + re.findall(r"(?m)^Signed-By:\s*(/\S+)", text):
+            keys[key] = None
+    for path in sorted(Path("/etc/apt/trusted.gpg.d").glob("*")):
+        if path.suffix in (".gpg", ".asc") and not path.name.startswith("ubuntu-keyring"):
+            keys[str(path)] = None
+    extra = []
+    if Path("/etc/apt/sources.list").exists():
+        for line in Path("/etc/apt/sources.list").read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and not re.search(r"(archive|security|ports)\.ubuntu\.com", line):
+                extra.append(line)
+    key_list = []
+    for key in sorted(keys):
+        source = Path(key)
+        if not source.is_file():
+            continue
+        (apt_dir / "keys").mkdir(parents=True, exist_ok=True)
+        stored = apt_dir / "keys" / source.name
+        shutil.copyfile(source, stored)
+        key_list.append({"path": key, "file": f"apt/keys/{source.name}"})
+    return {"sources": sources, "sources_list_extra": extra, "keys": key_list}
+
+
+def installer_packages():
+    """Packages from the OS installer's own list, so a base install is not repeated."""
+    path = Path("/var/log/installer/initial-status.gz")
+    if not path.exists():
+        return set()
+    names = set()
+    with gzip.open(path, "rt", errors="replace") as status:
+        for line in status:
+            if line.startswith("Package: "):
+                names.add(line.split(": ", 1)[1].strip())
+    return names
+
+
+def snap_apt():
+    code, out = run(["apt-mark", "showmanual"])
+    if code != 0:
+        raise RuntimeError("apt-mark showmanual failed")
+    manual = sorted(set(out.split()) - installer_packages())
+    skip = re.compile("|".join(f"(?:{pattern})" for pattern in APT_SKIP))
+    packages, debs = [], []
+    try:
+        import apt  # python3-apt
+        cache = apt.Cache()
+    except Exception:  # noqa: BLE001 - without python3-apt every package counts as from a repo
+        cache = None
+    for name in manual:
+        if skip.fullmatch(name):
+            continue
+        if cache is None:
+            packages.append(name)
+            continue
+        package = cache.get(name)
+        if package is None or package.installed is None:
+            continue
+        # A package whose installed version has since left its repo still has newer
+        # versions there, so only a package no repository offers at all counts as a .deb.
+        from_repo = any(origin.archive != "now" for version in package.versions for origin in version.origins)
+        if not from_repo:
+            # In no configured repository: installed from a .deb file.
+            debs.append({"name": name, "version": package.installed.version,
+                         "arch": package.installed.architecture})
+        else:
+            packages.append(name)
+    return packages, debs
+
+
+def snap_snaps():
+    if not have("snap"):
+        return []
+    code, out = run(["snap", "list", "--unicode=never", "--color=never"])
+    if code != 0:
+        raise RuntimeError("snap list failed (is snapd running?)")
+    snaps = []
+    for line in out.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 4 or fields[0] in SNAP_SKIP or SNAP_RUNTIME.fullmatch(fields[0]):
+            continue
+        notes = fields[5] if len(fields) > 5 else ""
+        if "base" in notes.split(","):
+            continue
+        # snap list shortens long channels ("latest/stable/…" for a branch): keep track/risk.
+        channel = fields[3].replace("/…", "").rstrip("…")
+        snaps.append({"name": fields[0], "channel": channel, "classic": "classic" in notes.split(",")})
+    return snaps
+
+
+def snap_flatpaks():
+    if not have("flatpak"):
+        return {"remotes": [], "apps": []}
+    _, remotes = run(["flatpak", "remotes", "--columns=name,url,options"])
+    _, apps = run(["flatpak", "list", "--app", "--columns=application,origin,installation"])
+    return {
+        "remotes": [dict(zip(("name", "url", "options"), line.split("\t"))) for line in remotes.splitlines() if line],
+        "apps": [dict(zip(("id", "remote", "installation"), line.split("\t"))) for line in apps.splitlines() if line],
+    }
+
+
+def snap_pipx():
+    if not have("pipx"):
+        return []
+    code, out = run(["pipx", "list", "--json"])
+    if code != 0:
+        raise RuntimeError("pipx list failed")
+    tools = []
+    for venv in json.loads(out).get("venvs", {}).values():
+        metadata = venv["metadata"]
+        main = metadata["main_package"]
+        tools.append({
+            "package": main["package"],
+            "spec": main.get("package_or_url") or main["package"],
+            "version": main.get("package_version", ""),
+            "inject": [{"package": name, "version": data.get("package_version", "")}
+                       for name, data in metadata.get("injected_packages", {}).items()],
+        })
+    return sorted(tools, key=lambda tool: tool["package"])
+
+
+def snap_uv():
+    if not have("uv"):
+        return []
+    code, out = run(["uv", "tool", "list"])
+    if code != 0:
+        raise RuntimeError("uv tool list failed")
+    tools = []
+    for line in out.splitlines():
+        match = re.match(r"^(\S+) v(\S+)", line)
+        if match:
+            tools.append({"name": match[1], "version": match[2]})
+    return tools
+
+
+def npm_command():
+    """npm on PATH, else the newest one nvm installed (nvm only loads in interactive shells)."""
+    if have("npm"):
+        return ["npm"]
+    for base in (os.environ.get("NVM_DIR"), HOME / ".config/nvm", HOME / ".nvm"):
+        if base and Path(base, "versions/node").is_dir():
+            versions = sorted(Path(base, "versions/node").iterdir(), key=lambda p: [int(x) for x in re.findall(r"\d+", p.name)])
+            if versions:
+                return [str(versions[-1] / "bin/npm")]
+    return None
+
+
+def snap_npm():
+    npm = npm_command()
+    if npm is None:
+        return []
+    env = dict(os.environ, PATH=f"{Path(npm[0]).parent}:{os.environ['PATH']}")
+    code, out = run(npm + ["ls", "-g", "--depth=0", "--json"], env=env)
+    if not out:
+        raise RuntimeError("npm ls -g failed")
+    dependencies = json.loads(out).get("dependencies", {})
+    return [{"name": name, "version": data.get("version", "")}
+            for name, data in sorted(dependencies.items()) if name not in NPM_SKIP]
+
+
+def snap_cargo():
+    if not have("cargo"):
+        return []
+    code, out = run(["cargo", "install", "--list"])
+    if code != 0:
+        raise RuntimeError("cargo install --list failed")
+    crates = []
+    for line in out.splitlines():
+        match = re.match(r"^(\S+) v(\S+)(?: \((\S+)\))?:$", line)
+        if match:
+            crate = {"name": match[1], "version": match[2]}
+            if match[3] and not match[3].startswith("/"):
+                crate["git"] = match[3]
+            crates.append(crate)
+    return crates
+
+
+def go_bin_dir():
+    if not have("go"):
+        return None
+    _, gobin = run(["go", "env", "GOBIN"])
+    if gobin.strip():
+        return Path(gobin.strip())
+    _, gopath = run(["go", "env", "GOPATH"])
+    return Path(gopath.strip().split(":")[0]) / "bin" if gopath.strip() else None
+
+
+def snap_go():
+    bin_dir = go_bin_dir()
+    if bin_dir is None or not bin_dir.is_dir():
+        return []
+    binaries = []
+    for path in sorted(bin_dir.iterdir()):
+        if not path.is_file():
+            continue
+        code, out = run(["go", "version", "-m", str(path)])
+        if code != 0:
+            continue
+        package = module_version = ""
+        for line in out.splitlines():
+            fields = line.strip().split("\t")
+            if fields[0] == "path" and len(fields) > 1:
+                package = fields[1]
+            elif fields[0] == "mod" and len(fields) > 2:
+                module_version = fields[2]
+        if package:
+            binaries.append({"name": path.name, "package": package, "version": module_version})
+    return binaries
+
+
+def dpkg_owned():
+    """Every path any installed .deb owns."""
+    owned = set()
+    for listing in Path("/var/lib/dpkg/info").glob("*.list"):
+        owned.update(listing.read_text(errors="replace").splitlines())
+    return owned
+
+
+def managed(path):
+    return any(fnmatch.fnmatch(path, pattern) for pattern in MANAGED)
+
+
+def snap_files():
+    """Files no package manager owns: copied as they are on restore."""
+    owned = dpkg_owned()
+    found = []
+
+    def add(path, scope):
+        try:
+            size = size_of(path)
+        except OSError:
+            return
+        found.append({"path": home_path(path), "scope": scope, "size": size,
+                      "type": "link" if path.is_symlink() else "dir" if path.is_dir() else "file"})
+
+    for path in sorted(Path("/opt").glob("*")) if Path("/opt").is_dir() else []:
+        if str(path) not in owned and not managed(str(path)):
+            add(path, "system")
+    for path in sorted(Path("/usr/local/bin").glob("*")):
+        if str(path) not in owned and not managed(str(path)):
+            add(path, "system")
+    tool_dirs = [HOME / ".local/share/pipx", HOME / ".local/share/uv", HOME / ".local/pipx", REPO, HOME / ".fzf"]
+    for path in sorted((HOME / ".local/bin").glob("*")):
+        if path.is_symlink():
+            target = Path(os.path.realpath(path))
+            if any(str(target).startswith(str(tool) + "/") for tool in tool_dirs):
+                continue  # pipx, uv, linux-land or fzf put it there
+            if target.exists() and str(target).startswith(str(HOME) + "/") and target.parent != HOME / ".local/bin":
+                add(target, "home")  # e.g. ~/.local/bin/claude -> ~/.local/share/claude/versions/X
+        add(path, "home")
+    fonts = HOME / ".local/share/fonts"
+    if fonts.is_dir() and any(fonts.iterdir()):
+        add(fonts, "home")
+    return found
+
+
+def snap_crontab():
+    code, out = run(["crontab", "-l"])
+    return out if code == 0 else ""
+
+
+def snap_systemd(out_dir):
+    unit_dir = HOME / ".config/systemd/user"
+    units = []
+    shutil.rmtree(out_dir / "systemd", ignore_errors=True)
+    if not unit_dir.is_dir():
+        return units
+    for path in sorted(unit_dir.iterdir()):
+        if not path.is_file() or path.is_symlink() or path.suffix not in (".service", ".timer", ".socket", ".path"):
+            continue
+        (out_dir / "systemd").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, out_dir / "systemd" / path.name)
+        _, state = run(["systemctl", "--user", "is-enabled", path.name])
+        units.append({"name": path.name, "enabled": state.strip() == "enabled"})
+    return units
+
+
+def write_bundle(out_dir, manifest):
+    """Archives the loose files and hand-installed .debs into out_dir/bundle (gitignored)."""
+    bundle = out_dir / "bundle"
+    bundle.mkdir(parents=True, exist_ok=True)
+    for scope, base, archive in (("system", "/", "system.tar"), ("home", str(HOME), "home.tar")):
+        entries = [item["path"] for item in manifest["files"] if item["scope"] == scope]
+        target = bundle / archive
+        if not entries:
+            target.unlink(missing_ok=True)
+            continue
+        relative = [os.path.relpath(real_path(entry), base) for entry in entries]
+        total = sum(item["size"] for item in manifest["files"] if item["scope"] == scope)
+        note(f"archiving {len(entries)} {scope} path(s), {human(total)}, into {target}")
+        command = ["tar", "-c", "-C", base, "--"] + relative
+        if scope == "system" and os.geteuid() != 0:
+            command = ["sudo"] + command  # keeps root-only files readable and owners intact
+        pipe_to_file(["nice", "-n", "19", "ionice", "-c", "3"] + command, target)
+    debs_dir = bundle / "debs"
+    shutil.rmtree(debs_dir, ignore_errors=True)
+    for deb in manifest["debs"]:
+        version = deb["version"].replace(":", "%3a")
+        cached = list(Path("/var/cache/apt/archives").glob(f"{deb['name']}_{version}_*.deb"))
+        if cached:
+            debs_dir.mkdir(exist_ok=True)
+            shutil.copyfile(cached[0], debs_dir / cached[0].name)
+            deb["bundled"] = cached[0].name
+        else:
+            deb["bundled"] = ""
+            note(f"{deb['name']} {deb['version']}: installed from a .deb that is no longer cached; restore will list it")
+    (bundle / "README").write_text(
+        "Loose files and .debs for `machine restore`. Not in git: copy this folder to the\n"
+        "same place in linux-land on the other machine.\n")
+
+
+def cmd_snapshot(args):
+    name = args.name or socket.gethostname().split(".")[0]
+    out_dir = MACHINES / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    release = os_release()
+    manifest = {
+        "name": name,
+        "taken": time.strftime("%Y-%m-%d %H:%M:%S %z"),
+        "distro": {"id": release.get("ID", ""), "version": release.get("VERSION_ID", ""),
+                   "codename": release.get("VERSION_CODENAME", ""), "pretty": release.get("PRETTY_NAME", "")},
+        "arch": dpkg_arch(),
+        "wsl": is_wsl(),
+        "home": str(HOME),
+        "errors": {},
+    }
+    steps = [
+        ("apt-sources", lambda: snap_apt_sources(out_dir)),
+        ("apt", snap_apt),
+        ("snap", snap_snaps),
+        ("flatpak", snap_flatpaks),
+        ("pipx", snap_pipx),
+        ("uv", snap_uv),
+        ("npm", snap_npm),
+        ("cargo", snap_cargo),
+        ("go", snap_go),
+        ("files", snap_files),
+        ("crontab", snap_crontab),
+        ("systemd", lambda: snap_systemd(out_dir)),
+    ]
+    for section, step in steps:
+        try:
+            value = step()
+        except Exception as error:  # noqa: BLE001 - one broken tool must not lose the rest
+            manifest["errors"][section] = str(error)
+            note(f"{section}: {error}")
+            value = None
+        if section == "apt":
+            manifest["apt"], manifest["debs"] = value if value else ([], [])
+        else:
+            manifest[section] = value if value is not None else ([] if section != "crontab" else "")
+    if Path("/etc/wsl.conf").exists():
+        manifest["wsl_conf"] = Path("/etc/wsl.conf").read_text()
+    if args.bundle:
+        write_bundle(out_dir, manifest)
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    files_size = sum(item["size"] for item in manifest["files"])
+    say(f"Snapshot of {name} ({manifest['distro']['pretty']}, {manifest['arch']}"
+        f"{', WSL' if manifest['wsl'] else ''}) written to {home_path(out_dir)}:")
+    for label, count in (("apt packages", len(manifest["apt"])), ("third-party apt sources", len(manifest["apt-sources"]["sources"]) if manifest["apt-sources"] else 0),
+                         (".debs installed by hand", len(manifest["debs"])), ("snaps", len(manifest["snap"])),
+                         ("flatpaks", len(manifest["flatpak"]["apps"]) if manifest["flatpak"] else 0),
+                         ("pipx tools", len(manifest["pipx"])), ("uv tools", len(manifest["uv"])),
+                         ("npm globals", len(manifest["npm"])), ("cargo crates", len(manifest["cargo"])),
+                         ("go binaries", len(manifest["go"])), ("systemd user units", len(manifest["systemd"]))):
+        say(f"  {count:4}  {label}")
+    say(f"  {len(manifest['files']):4}  loose files/dirs ({human(files_size)})"
+        + ("" if args.bundle else ": run with --bundle to archive them for restore"))
+    if manifest["crontab"]:
+        say("        crontab included: check it holds no secrets before committing")
+    if manifest["errors"]:
+        say(f"  skipped after errors: {', '.join(manifest['errors'])}")
+    say(f"Review with: git -C {home_path(REPO)} diff -- machines/{name}")
+
+
+# ---------------------------------------------------------------------------------------
+# diff / restore
+
+
+class Plan:
+    """Collects what is missing per section, then runs or prints the fixes."""
+
+    def __init__(self, dry_run):
+        self.dry_run = dry_run
+        self.results = []  # (section, done, failed, manual)
+
+    def step(self, section, description, command, ok_codes=(0,)):
+        if self.dry_run:
+            say(f"  would run: {' '.join(command)}")
+            return True
+        say(f"  {description}")
+        code = subprocess.run(command).returncode
+        return code in ok_codes
+
+    def record(self, section, done=0, failed=None, manual=None):
+        self.results.append((section, done, failed or [], manual or []))
+
+
+def load_snapshot(arg):
+    if arg:
+        path = Path(arg)
+        if not path.exists() and (MACHINES / arg).exists():
+            path = MACHINES / arg
+    else:
+        here = socket.gethostname().split(".")[0]
+        others = [p for p in MACHINES.glob("*/manifest.json") if p.parent.name != here] if MACHINES.is_dir() else []
+        if len(others) != 1:
+            names = ", ".join(p.parent.name for p in others) or "none"
+            sys.exit(f"name the snapshot to use (machines here: {names})")
+        path = others[0].parent
+    if path.is_file():
+        path = path.parent
+    manifest_file = path / "manifest.json"
+    if not manifest_file.exists():
+        sys.exit(f"no manifest.json in {path}")
+    return path, json.loads(manifest_file.read_text())
+
+
+def check_compatible(manifest, force):
+    release, arch = os_release(), dpkg_arch()
+    theirs = manifest["distro"]
+    problems = []
+    if (theirs["id"], theirs["version"]) != (release.get("ID"), release.get("VERSION_ID")):
+        problems.append(f"snapshot is {theirs['pretty']}, this is {release.get('PRETTY_NAME')}")
+    if manifest["arch"] != arch:
+        problems.append(f"snapshot is {manifest['arch']}, this is {arch}")
+    if problems and not force:
+        sys.exit("; ".join(problems) + " (--force to try anyway)")
+    for problem in problems:
+        say(f"Warning: {problem}")
+
+
+def installed_apt():
+    _, out = run(["dpkg-query", "-W", "-f=${Package}\t${db:Status-Abbrev}\n"])
+    # Status-Abbrev is want/status/error: "ii " installed, "hi " installed and held.
+    return {line.split("\t")[0] for line in out.splitlines() if line.split("\t")[-1][1:2] == "i"}
+
+
+def restore_apt_sources(manifest, snapshot, plan):
+    data = manifest.get("apt-sources") or {}
+    added, differs = 0, []
+    for key in data.get("keys", []):
+        target = Path(key["path"])
+        if target.exists():
+            continue
+        plan.step("apt-sources", f"adding apt key {target}",
+                  sudo(["install", "-D", "-m", "644", str(snapshot / key["file"]), str(target)]))
+        added += 1
+    for source in data.get("sources", []):
+        target = Path("/etc/apt/sources.list.d") / source["file"]
+        if target.exists():
+            if target.read_text() != source["text"]:
+                differs.append(f"{target} differs from the snapshot; left alone")
+            continue
+        if plan.dry_run:
+            say(f"  would add apt source {target}")
+        else:
+            say(f"  adding apt source {target}")
+            subprocess.run(sudo(["tee", str(target)]), input=source["text"], text=True, stdout=subprocess.DEVNULL, check=True)
+        added += 1
+    if data.get("sources_list_extra"):
+        differs.append("/etc/apt/sources.list had extra lines on the source machine (see manifest); add them by hand if needed")
+    if added and not plan.dry_run:
+        plan.step("apt-sources", "refreshing apt", sudo(["apt-get", "update"]))
+    plan.record("apt-sources", added, manual=differs)
+    return added
+
+
+def restore_apt(manifest, plan):
+    present = installed_apt()
+    missing = [name for name in manifest.get("apt", []) if name not in present]
+    if not missing:
+        plan.record("apt")
+        return
+    available, unavailable = missing, []
+    try:
+        import apt  # python3-apt
+        cache = apt.Cache()
+        available = [name for name in missing if name in cache and cache[name].candidate]
+        unavailable = [name for name in missing if name not in available]
+    except Exception:  # noqa: BLE001 - let apt-get report what it cannot find
+        pass
+    if plan.dry_run:
+        if available:
+            say(f"  apt: {len(available)} to install: {' '.join(available)}")
+        plan.record("apt", len(available), manual=[f"not in any apt source here: {' '.join(unavailable)}"] if unavailable else [])
+        return
+    failed = []
+    if available and not plan.step("apt", f"installing {len(available)} apt package(s)",
+                                    sudo(["apt-get", "install", "-y"] + available)):
+        # One bad package fails the batch: retry one by one to find it.
+        for name in available:
+            if not plan.step("apt", f"installing {name}", sudo(["apt-get", "install", "-y", name])):
+                failed.append(name)
+    plan.record("apt", len(available) - len(failed),
+                ([f"failed: {' '.join(failed)}"] if failed else []) + ([f"not in any apt source here: {' '.join(unavailable)}"] if unavailable else []))
+
+
+def restore_debs(manifest, snapshot, plan):
+    present = installed_apt()
+    done, manual = 0, []
+    for deb in manifest.get("debs", []):
+        if deb["name"] in present:
+            continue
+        bundled = snapshot / "bundle" / "debs" / deb.get("bundled", "") if deb.get("bundled") else None
+        if bundled and bundled.exists():
+            if plan.step("debs", f"installing {bundled.name}", sudo(["apt-get", "install", "-y", str(bundled)])):
+                done += 1
+            else:
+                manual.append(f"{deb['name']}: installing {bundled.name} failed")
+        else:
+            manual.append(f"{deb['name']} {deb['version']}: installed from a .deb that was not bundled; get it from its vendor")
+    plan.record("debs", done, manual=manual)
+
+
+def restore_snaps(manifest, plan):
+    wanted = manifest.get("snap", [])
+    if not wanted:
+        return plan.record("snap")
+    if not have("snap"):
+        return plan.record("snap", manual=[f"snapd is not installed; wanted: {' '.join(s['name'] for s in wanted)}"])
+    code, out = run(["snap", "list", "--unicode=never", "--color=never"])
+    if code != 0:
+        return plan.record("snap", manual=["snap list failed: snapd needs systemd (on WSL: [boot] systemd=true in /etc/wsl.conf)"])
+    present = {line.split()[0] for line in out.splitlines()[1:] if line.strip()}
+    done, failed = 0, []
+    for item in wanted:
+        if item["name"] in present:
+            continue
+        command = sudo(["snap", "install", item["name"], f"--channel={item['channel']}"]) + (["--classic"] if item["classic"] else [])
+        if plan.step("snap", f"installing snap {item['name']}", command):
+            done += 1
+        else:
+            failed.append(item["name"])
+    plan.record("snap", done, failed)
+
+
+def restore_flatpaks(manifest, plan):
+    data = manifest.get("flatpak") or {}
+    if not data.get("apps"):
+        return plan.record("flatpak")
+    if not have("flatpak"):
+        return plan.record("flatpak", manual=["flatpak is not installed (apt install flatpak), then run restore again"])
+    _, out = run(["flatpak", "list", "--app", "--columns=application"])
+    present = set(out.split())
+    done, failed = 0, []
+    for remote in data.get("remotes", []):
+        scope = "--user" if "user" in remote.get("options", "") else "--system"
+        plan.step("flatpak", f"adding flatpak remote {remote['name']}",
+                  ["flatpak", "remote-add", scope, "--if-not-exists", remote["name"], remote["url"]])
+    for app in data["apps"]:
+        if app["id"] in present:
+            continue
+        scope = "--user" if app.get("installation") == "user" else "--system"
+        if plan.step("flatpak", f"installing {app['id']}", ["flatpak", "install", scope, "-y", "--noninteractive", app["remote"], app["id"]]):
+            done += 1
+        else:
+            failed.append(app["id"])
+    plan.record("flatpak", done, failed)
+
+
+def restore_tools(section, wanted, present, command_for, plan, needs):
+    """Shared shape of the pipx / uv / npm / cargo / go sections."""
+    missing = [item for item in wanted if item["name"] not in present]
+    if not missing:
+        return plan.record(section)
+    if needs and not have(needs):
+        return plan.record(section, manual=[f"{needs} is not installed; wanted: {' '.join(i['name'] for i in missing)}"])
+    done, failed = 0, []
+    for item in missing:
+        if plan.step(section, f"{section}: installing {item['name']}", command_for(item)):
+            done += 1
+        else:
+            failed.append(item["name"])
+    plan.record(section, done, failed)
+
+
+def restore_language_tools(manifest, plan, latest):
+    def pinned(name, version, separator):
+        return name if latest or not version else f"{name}{separator}{version}"
+
+    # pipx
+    pipx_items = [dict(tool, name=tool["package"]) for tool in manifest.get("pipx", [])]
+    present = set()
+    if have("pipx"):
+        code, out = run(["pipx", "list", "--json"])
+        if code == 0:
+            present = {v["metadata"]["main_package"]["package"] for v in json.loads(out).get("venvs", {}).values()}
+
+    def pipx_command(tool):
+        spec = tool["spec"] if tool["spec"] != tool["package"] else pinned(tool["package"], tool["version"], "==")
+        return ["pipx", "install", spec]
+
+    restore_tools("pipx", pipx_items, present, pipx_command, plan, "pipx")
+    if have("pipx") and not plan.dry_run:
+        for tool in manifest.get("pipx", []):
+            for extra in tool.get("inject", []):
+                run(["pipx", "inject", tool["package"], pinned(extra["package"], extra["version"], "==")])
+
+    # uv
+    present = set()
+    if have("uv"):
+        _, out = run(["uv", "tool", "list"])
+        present = {m[1] for m in re.finditer(r"(?m)^(\S+) v", out)}
+    restore_tools("uv", manifest.get("uv", []), present,
+                  lambda t: ["uv", "tool", "install", pinned(t["name"], t["version"], "==")], plan, "uv")
+
+    # npm (needs nvm's node, which setup.sh installs)
+    npm = npm_command()
+    present = set()
+    if npm:
+        env = dict(os.environ, PATH=f"{Path(npm[0]).parent}:{os.environ['PATH']}")
+        _, out = run(npm + ["ls", "-g", "--depth=0", "--json"], env=env)
+        present = set(json.loads(out or "{}").get("dependencies", {}))
+        os.environ["PATH"] = env["PATH"]
+    restore_tools("npm", manifest.get("npm", []), present,
+                  lambda t: (npm or ["npm"]) + ["install", "-g", pinned(t["name"], t["version"], "@")], plan, None if npm else "npm")
+
+    # cargo
+    present = set()
+    if have("cargo"):
+        _, out = run(["cargo", "install", "--list"])
+        present = {m[1] for m in re.finditer(r"(?m)^(\S+) v", out)}
+
+    def cargo_command(crate):
+        if crate.get("git"):
+            return ["cargo", "install", "--git", crate["git"].split("#")[0], crate["name"]]
+        return ["cargo", "install", crate["name"]] + ([] if latest else ["--version", crate["version"]])
+
+    restore_tools("cargo", manifest.get("cargo", []), present, cargo_command, plan, "cargo")
+
+    # go
+    bin_dir = go_bin_dir()
+    present = {p.name for p in bin_dir.iterdir()} if bin_dir and bin_dir.is_dir() else set()
+    go_items = [item for item in manifest.get("go", []) if item["version"] and item["version"] != "(devel)"]
+    restore_tools("go", go_items, present,
+                  lambda b: ["go", "install", f"{b['package']}@{'latest' if latest else b['version']}"], plan, "go")
+    devel = [item["name"] for item in manifest.get("go", []) if item not in go_items and item["name"] not in present]
+    if devel:
+        plan.results[-1][3].append(f"built from local source, copy or rebuild by hand: {' '.join(devel)}")
+
+
+def restore_files(manifest, snapshot, plan):
+    """Unpacks the bundle's archives, adding only paths that do not exist yet."""
+    files = manifest.get("files", [])
+    missing = [item for item in files if not os.path.lexists(real_path(item["path"]))]
+    if not missing:
+        return plan.record("files")
+    manual = []
+    for scope, base, archive in (("system", "/", "system.tar"), ("home", str(HOME), "home.tar")):
+        wanted = [item for item in missing if item["scope"] == scope]
+        if not wanted:
+            continue
+        source = snapshot / "bundle" / archive
+        names = ", ".join(item["path"] for item in wanted)
+        if not source.exists():
+            manual.append(f"no bundle/{archive} (snapshot --bundle on the source machine, then copy bundle/): {names}")
+            continue
+        if plan.dry_run:
+            say(f"  would unpack from bundle/{archive}: {names}")
+            continue
+        say(f"  unpacking {len(wanted)} {scope} path(s) from bundle/{archive}")
+        relative = [os.path.relpath(real_path(item["path"]), base) for item in wanted]
+        command = ["tar", "-x", "-p", "--skip-old-files", "-C", base, "--"] + relative
+        if scope == "system":
+            command = sudo(command)
+        else:
+            command = ["tar", "-x", "--skip-old-files", "--no-same-owner", "-C", base, "--"] + relative
+        try:
+            file_to_pipe(source, ["nice", "-n", "19", "ionice", "-c", "3"] + command)
+        except RuntimeError as error:
+            manual.append(str(error))
+    if not plan.dry_run:
+        relink_home(manifest.get("home", ""), [item for item in missing if item["scope"] == "home"])
+    if any(item["path"].startswith("~/.local/share/fonts") for item in missing) and have("fc-cache") and not plan.dry_run:
+        run(["fc-cache", "-f"])
+    plan.record("files", len(missing) if not plan.dry_run else 0, manual=manual)
+
+
+def relink_home(old_home, items):
+    """Points symlinks that pointed into the source machine's home at this one's."""
+    if not old_home or old_home == str(HOME):
+        return
+    paths = []
+    for item in items:
+        path = real_path(item["path"])
+        paths.append(path)
+        if path.is_dir() and not path.is_symlink():
+            paths.extend(Path(root) / name for root, dirs, files in os.walk(path) for name in dirs + files)
+    for path in paths:
+        if path.is_symlink():
+            target = os.readlink(path)
+            if target == old_home or target.startswith(old_home + "/"):
+                path.unlink()
+                path.symlink_to(str(HOME) + target[len(old_home):])
+
+
+def restore_crontab(manifest, plan):
+    wanted = manifest.get("crontab", "")
+    if not wanted:
+        return plan.record("crontab")
+    current = snap_crontab()
+    if current == wanted:
+        return plan.record("crontab")
+    if current.strip():
+        return plan.record("crontab", manual=["this machine has its own crontab; compare with the snapshot's and merge by hand (crontab -e)"])
+    if plan.dry_run:
+        say("  would install the snapshot's crontab")
+        return plan.record("crontab")
+    subprocess.run(["crontab", "-"], input=wanted, text=True, check=True)
+    say("  installed the snapshot's crontab")
+    plan.record("crontab", 1)
+
+
+def restore_systemd(manifest, snapshot, plan):
+    unit_dir = HOME / ".config/systemd/user"
+    done, enable = 0, []
+    for unit in manifest.get("systemd", []):
+        target = unit_dir / unit["name"]
+        if target.exists():
+            continue
+        if plan.dry_run:
+            say(f"  would add systemd user unit {unit['name']}")
+            continue
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(snapshot / "systemd" / unit["name"], target)
+        done += 1
+        if unit["enabled"]:
+            enable.append(unit["name"])
+    if done:
+        run(["systemctl", "--user", "daemon-reload"])
+        for name in enable:
+            run(["systemctl", "--user", "enable", "--now", name])
+    plan.record("systemd", done)
+
+
+def cmd_restore(args, dry_run=False):
+    snapshot, manifest = load_snapshot(args.snapshot)
+    check_compatible(manifest, args.force)
+    only = set(args.only.split(",")) if args.only else set(SECTIONS)
+    unknown = only - set(SECTIONS)
+    if unknown:
+        sys.exit(f"unknown section(s) {', '.join(sorted(unknown))}; choose from {', '.join(SECTIONS)}")
+    plan = Plan(dry_run)
+    say(f"{'Comparing with' if dry_run else 'Restoring from'} {manifest['name']} ({manifest['distro']['pretty']}, taken {manifest['taken']})")
+    if not dry_run and os.geteuid() != 0:
+        subprocess.run(["sudo", "-v"], check=True)  # ask for the password once, up front
+    if "apt-sources" in only:
+        restore_apt_sources(manifest, snapshot, plan)
+    if "apt" in only:
+        restore_apt(manifest, plan)
+    if "debs" in only:
+        restore_debs(manifest, snapshot, plan)
+    if "snap" in only:
+        restore_snaps(manifest, plan)
+    if "flatpak" in only:
+        restore_flatpaks(manifest, plan)
+    if only & {"pipx", "uv", "npm", "cargo", "go"}:
+        # The helper covers all five; drop the sections not asked for afterwards.
+        before = len(plan.results)
+        restore_language_tools(manifest, plan, args.latest)
+        plan.results[before:] = [result for result in plan.results[before:] if result[0] in only]
+    if "files" in only:
+        restore_files(manifest, snapshot, plan)
+    if "crontab" in only:
+        restore_crontab(manifest, plan)
+    if "systemd" in only:
+        restore_systemd(manifest, snapshot, plan)
+
+    say("")
+    say("Missing on this machine:" if dry_run else "Summary:")
+    clean = True
+    for section, done, failed, manual in plan.results:
+        if done:
+            say(f"  {section:12} {'added' if not dry_run else 'missing'} {done}")
+        for item in failed:
+            say(f"  {section:12} FAILED {item}")
+            clean = False
+        for item in manual:
+            say(f"  {section:12} by hand: {item}")
+            clean = False
+    if dry_run:
+        say("Run 'machine restore' to install the above." if any(r[1] or r[2] for r in plan.results) or not clean else "  nothing: this machine has everything in the snapshot")
+    elif clean:
+        say("  everything in the snapshot is present")
+    return 0 if clean else 1
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="machine", description=__doc__.split("\n\n")[0],
+                                     formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
+    commands = parser.add_subparsers(dest="command", required=True)
+    snapshot = commands.add_parser("snapshot", help="record this machine into machines/NAME/")
+    snapshot.add_argument("--name", help="snapshot name (default: the host name)")
+    snapshot.add_argument("--bundle", action="store_true", help="also archive loose files and .debs into bundle/ (gitignored)")
+    for name, help_text in (("diff", "show what this machine lacks"), ("restore", "install what this machine lacks")):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("snapshot", nargs="?", help="machines/NAME, NAME, or a manifest.json (default: the only other machine)")
+        command.add_argument("--only", help=f"comma-separated sections: {','.join(SECTIONS)}")
+        command.add_argument("--latest", action="store_true", help="install the newest versions instead of the recorded ones")
+        command.add_argument("--force", action="store_true", help="allow a snapshot from another release or architecture")
+    args = parser.parse_args()
+    if os.geteuid() == 0:
+        sys.exit("run machine as your normal user; it uses sudo where needed")
+    if args.command == "snapshot":
+        cmd_snapshot(args)
+        return 0
+    if args.command == "diff":
+        return cmd_restore(args, dry_run=True)
+    return cmd_restore(args)
+
+
+if __name__ == "__main__":
+    # Exit quietly when output goes to something like `| head` that stops reading.
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit("\nstopped")

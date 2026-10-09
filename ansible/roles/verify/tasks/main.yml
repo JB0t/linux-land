@@ -69,8 +69,24 @@
     or 'rror' in nvim_check.stdout ~ nvim_check.stderr
   when: not ansible_check_mode
 
-- name: Check setup left nvim/lazy-lock.json as it found it
+- name: Read nvim/lazy-lock.json after setup
   ansible.builtin.stat:
     path: "{{ linux_land_dir }}/nvim/lazy-lock.json"
   register: lockfile_at_end
-  failed_when: lockfile_at_end.stat.checksum != lockfile_at_start.stat.checksum
+
+- name: Show what setup changed in nvim/lazy-lock.json
+  ansible.builtin.command: git -C "{{ linux_land_dir }}" diff -- nvim/lazy-lock.json
+  register: lockfile_diff
+  changed_when: false
+  check_mode: false
+  when: lockfile_at_end.stat.checksum != lockfile_at_start.stat.checksum
+
+# Lazy rewrites the lockfile to match the plugin specs, so a plugin added to or
+# removed from nvim/lua without committing the lockfile it produced fails here.
+- name: Check setup left nvim/lazy-lock.json as it found it
+  ansible.builtin.assert:
+    that: lockfile_at_end.stat.checksum == lockfile_at_start.stat.checksum
+    fail_msg: |-
+      setup changed nvim/lazy-lock.json; commit the lockfile that matches nvim/lua:
+      {{ lockfile_diff.stdout | default('') }}
+    quiet: true

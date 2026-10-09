@@ -30,6 +30,7 @@
     state: directory
   loop:
     - "{{ home }}/.config"
+    - "{{ home }}/.local/bin"
     - "{{ home }}/.tmux/tx/sessions/init"
     - "{{ home }}/.tmux/tx/sessions/normal"
     - "{{ notes_dir }}"
