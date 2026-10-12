@@ -2,6 +2,7 @@
 
 # Requires: nvim, $NVIM_BIN, xclip
 
+alias dirsize='du -h --max-depth=1 | sort -hr'
 alias copy='xclip -sel clip -r'
 
 # clip_text: the clipboard as text. xclip reads X's clipboard (on WSL, WSLg keeps it

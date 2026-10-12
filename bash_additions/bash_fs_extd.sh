@@ -10,27 +10,6 @@ nvfsextd(){
     fi
 }
 
-ghto(){
-    org=$(find "$GIT_ROOT_DIR" -depth -maxdepth 1 -type d | fzf)
-    if [ -z $org ]; then
-        echo "org cannot be empty"
-        return
-    fi
-    repo=$(find "$org" -depth -maxdepth 1 -type d | fzf)
-    if [ -z $repo ]; then
-        echo "repo cannot be empty"
-        return
-    fi
-    s_name="$(basename $repo)"
-    session_exists=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -x "$s_name")
-    if [ -z "$session_exists" ]; then
-        _tx_build_session "$s_name" "$repo"
-    else
-        echo "Session with name $s_name already exists."
-        tmux switch -t "$s_name"
-    fi
-}
-
 yesterday(){
     dayCount=1
     yDate=$(date --date="$dayCount days ago" +"%Y/%m/%d")

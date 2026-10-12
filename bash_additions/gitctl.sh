@@ -193,7 +193,7 @@ _select_local_org(){
 }
 
 gitpullall(){
-    workdir=$PWD
+    local workdir=$PWD
     local org=$(_select_local_org)
     if [ $org == 1 ]; then
         echo "org cannot be empty"
@@ -211,6 +211,66 @@ gitpullall(){
     done
     cd $workdir
 }
+
+gitviewactions(){
+    chrome "https://github.com/$(_get_orgrepo)/actions"
+}
+
+_get_repo(){
+    local repos=$(find "$GIT_ROOT_DIR" -depth -maxdepth 2 -type d)
+    if echo $repos | grep -q "${PWD##*/}"; then
+        pwd
+    else
+        local repo_choice=$(echo "$repos" | fzf)
+        if [ -z $repo_choice ]; then
+            echo "repo cannot be empty"
+            return
+        else
+            echo $repo_choice
+        fi
+    fi
+}
+
+_get_orgrepo(){
+    local repo_select=$(_get_repo)
+    local orgrepo="${repo_select#${repo_select%/*/*}/}"
+    echo $orgrepo
+}
+
+gitrunaction(){
+    local orgrepo=$(_get_orgrepo)
+    if [ -z $orgrepo ]; then
+        echo "org/repo cannot be empty"
+        return
+    fi
+    local workflow=$(gh workflow list -R $orgrepo | awk '{print $1}' | fzf)
+    if [ -z $workflow ]; then
+        echo "workflow cannot be empty"
+        return
+    fi
+    gh workflow run $workflow -R $orgrepo
+}
+
+ghto(){
+    local repo=$(find "$GIT_ROOT_DIR" -depth -maxdepth 2 -type d | fzf)
+    if [[ -z $repo ]]; then
+        echo "repo cannot be empty"
+        return
+    fi
+    local s_name="$(basename $repo)"
+    if [[ -n "$1" && "$1" == "-t" ]]; then
+        local session_exists=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -x "$s_name")
+        if [ -z "$session_exists" ]; then
+            _tx_build_session "$s_name" "$repo"
+        else
+            echo "Session with name $s_name already exists."
+            tmux switch -t "$s_name"
+        fi
+    else
+        cd $repo
+    fi
+}
+
 
 clonerepos(){
     workdir=$PWD
