@@ -1,14 +1,14 @@
 # bash_additions
 
-<!-- docgen:begin id=bash_additions:overview scope=bash_additions hash=77cd32b48792 -->
-Bash additions module extends shell environment with custom commands and functions for common tasks. It provides specialized scripts for AWS, Azure, Git, Terraform, and note-taking workflows. Each script exports functions that integrate with system tools and user preferences.
+<!-- docgen:begin id=bash_additions:overview scope=bash_additions hash=cff35575ccfd -->
+Bash additions module extends shell functionality with custom commands and utilities for AWS, Azure, Git, Terraform, and note-taking workflows. It provides enhanced navigation, file system operations, and integration with external tools like nvim, tmux, and fzf. The module organizes these extensions into separate scripts, each focusing on a specific domain or task.
 
-Main components include AWS CLI extensions for profile management and login, Azure CLI helper for portal navigation, Git utilities for branch and repository operations, and Terraform control functions. File system navigation helpers offer quick directory switching and note creation. Markdown note-taking tools provide search and editing capabilities.
+Core components include AWS CLI extensions for profile management and login, Azure CLI helpers for portal navigation, Git utilities for branch operations and PR creation, and Terraform command wrappers. File system extensions offer directory navigation, note creation, and search capabilities. The module also includes clipboard management, command history tools, and session handling for tmux.
 
-Functions connect through shared dependencies like `fzf`, `tmux`, and `nvim`. Scripts source each other to build upon existing functionality. Environment variables like `NOTES_DIR` and `NVIM_BIN` configure behavior. The module uses `bash_cmd_extd.sh` for clipboard and editor integration, `fs_nav_extd.sh` for directory navigation, and `md_notes.sh` for structured note management.
+Most scripts depend on standard Unix tools and environment variables like `NVIM_BIN`, `NOTES_DIR`, and `JB0T_SCRIPTS_DIR`. They integrate with existing shell configurations through sourcing and provide aliases and functions that extend the command line experience. The module uses fzf for interactive selections and tmux for window management, creating a cohesive workflow for developers and system administrators.
 <!-- docgen:end id=bash_additions:overview -->
 
-<!-- docgen:begin id=bash_additions:reference scope=bash_additions hash=77cd32b48792 -->
+<!-- docgen:begin id=bash_additions:reference scope=bash_additions hash=cff35575ccfd -->
 ## Reference
 
 ### `aws_cli_extd.sh`
@@ -37,7 +37,6 @@ Functions connect through shared dependencies like `fzf`, `tmux`, and `nvim`. Sc
 
 - **`bash_fs_extd.sh`** (script): Requires: tmux, nvim, code.
 - **`nvfsextd`** (function)
-- **`ghto`** (function)
 - **`yesterday`** (function)
 - **`freplace`** (function)
 
@@ -68,6 +67,9 @@ Functions connect through shared dependencies like `fzf`, `tmux`, and `nvim`. Sc
 - **`gitchromeopen`** (function)
 - **`gitcreatepr`** (function)
 - **`gitpullall`** (function)
+- **`gitviewactions`** (function)
+- **`gitrunaction`** (function)
+- **`ghto`** (function)
 - **`clonerepos`** (function)
 - **`updatenotes`** (function)
 
