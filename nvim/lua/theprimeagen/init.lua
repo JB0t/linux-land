@@ -114,3 +114,14 @@ vim.g.netrw_browse_split = 0
 vim.g.netrw_banner = 0
 vim.g.netrw_winsize = 25
 
+-- Ensure your conceallevel allows hiding text (render-markdown sets this by default)
+vim.opt.conceallevel = 2
+
+-- Match your docgen start and end blocks and completely hide them
+vim.api.nvim_create_autocmd("FileType", {
+    pattern = "markdown",
+    callback = function()
+        vim.cmd([[syntax match DocgenHidden /^<!-- docgen:\(begin\|end\) id=.*$/ conceal]])
+    end
+})
+
