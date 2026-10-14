@@ -6,6 +6,23 @@ Whatever I want to be able to pop-up somewhere else.
 
 ## Setting up a machine
 
+### WSL
+
+* Install [winget-cli](https://github.com/microsoft/winget-cli/releases)
+* Install windows terminal
+
+```bash
+Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.WindowsTerminal_8wekyb3d8bbwe
+```
+
+* Then WSL
+
+```bash
+wsl --install -d Ubuntu-26.04
+```
+
+### Post WSL
+
 Tested on Ubuntu 24.04 (bare metal, WSL2, and a clean container in CI).
 Needs only `git`, `curl` and a user with `sudo`:
 
