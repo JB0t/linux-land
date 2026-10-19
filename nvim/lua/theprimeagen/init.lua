@@ -125,3 +125,21 @@ vim.api.nvim_create_autocmd("FileType", {
     end
 })
 
+-- Function to open the file under cursor using system default application
+local function open_image_under_cursor()
+    local file_path = vim.fn.expand("<cfile>")
+
+    -- Check if the file extension looks like an image
+    if file_path:match("%.png$") or file_path:match("%.jpg$") or file_path:match("%.jpeg$") or file_path:match("%.webp$") or file_path:match("%.gif$") then
+        -- Execute system open command asynchronously based on OS
+        local open_cmd = vim.fn.has("mac") == 1 and "open" or "xdg-open"
+        vim.fn.jobstart({open_cmd, file_path}, {detach = true})
+        print("Opening image: " .. file_path)
+    else
+        -- Fallback to default Neovim 'gf' behavior if it's not an image
+        vim.cmd("normal! gf")
+    end
+end
+
+-- Map 'gf' to your custom function
+vim.keymap.set("n", "gf", open_image_under_cursor, { desc = "Open file or view image under cursor" })
