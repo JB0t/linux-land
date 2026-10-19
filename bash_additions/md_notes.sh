@@ -85,7 +85,7 @@ notegrep() {
 # Live content search over $NOTES_DIR (like telescope live_grep), opens the match in $NVIM_BIN.
 # clctl's task workspaces (YYYY/MM/DD/workspaces/) only hold symlinks to notes found
 # elsewhere, so they are skipped: with --follow every linked note would match twice.
-search_notes() {
+searchnotes() {
     local rg_cmd selection file line
     rg_cmd="rg --line-number --column --no-heading --color=always --smart-case --follow --glob='!.git' --glob='!venv' --glob='!**/workspaces/**'"
     selection=$(cd "$NOTES_DIR" && : | fzf --ansi --disabled --query "$*" \

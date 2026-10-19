@@ -62,3 +62,22 @@ if [[ $(ls ~/.tmux/tmp_sessions | wc -l) -ge 1 ]]; then
     echo "----"
     echo ""
 fi
+
+searchdir() {
+    local rg_cmd selection file line
+    rg_cmd="rg --line-number --column --no-heading --color=always --smart-case --follow --glob='!.git' --glob='!venv' --glob='!**/workspaces/**'"
+    selection=$(cd "$PWD" && : | fzf --ansi --disabled --query "$*" \
+        --bind "start:reload:$rg_cmd -- {q} || true" \
+        --bind "change:reload:sleep 0.1; $rg_cmd -- {q} || true" \
+        --delimiter : \
+        --prompt="  notes › " \
+        --layout=reverse \
+        --border=rounded \
+        --border-label=" search-notes " \
+        --preview "awk -v l={2} 'NR>=l-10 && NR<=l+10 {printf \"%s%5d  %s\033[0m\n\", (NR==l ? \"\033[1;33m\" : \"\"), NR, \$0}' {1}" \
+        --preview-window 'right,60%') || return
+    file=$(cut -d: -f1 <<<"$selection")
+    line=$(cut -d: -f2 <<<"$selection")
+    "${NVIM_BIN:-nvim}" "+$line" "$PWD/$file"
+}
+
