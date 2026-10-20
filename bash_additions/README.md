@@ -1,14 +1,14 @@
 # bash_additions
 
-<!-- docgen:begin id=bash_additions:overview scope=bash_additions hash=cff35575ccfd -->
-Bash additions module extends shell functionality with custom commands and utilities for AWS, Azure, Git, Terraform, and note-taking workflows. It provides enhanced navigation, file system operations, and integration with external tools like nvim, tmux, and fzf. The module organizes these extensions into separate scripts, each focusing on a specific domain or task.
+<!-- docgen:begin id=bash_additions:overview scope=bash_additions hash=e32cffcbed94 -->
+Bash additions module extends shell environment with custom commands and functions for AWS, Azure, Git, Terraform, and note-taking workflows. It provides utilities for clipboard management, file system navigation, terminal multiplexing, and integration with external tools like nvim, tmux, and fzf. Scripts source each other to build a cohesive set of productivity enhancements.
 
-Core components include AWS CLI extensions for profile management and login, Azure CLI helpers for portal navigation, Git utilities for branch operations and PR creation, and Terraform command wrappers. File system extensions offer directory navigation, note creation, and search capabilities. The module also includes clipboard management, command history tools, and session handling for tmux.
+Key components include AWS and Azure CLI extensions for profile management and portal access, Git control functions for branch operations and PR creation, and Terraform utilities for variable sets and workspace management. Note-taking scripts enable live search, daily note creation, and content navigation within a structured directory hierarchy.
 
-Most scripts depend on standard Unix tools and environment variables like `NVIM_BIN`, `NOTES_DIR`, and `JB0T_SCRIPTS_DIR`. They integrate with existing shell configurations through sourcing and provide aliases and functions that extend the command line experience. The module uses fzf for interactive selections and tmux for window management, creating a cohesive workflow for developers and system administrators.
+Functions integrate with tmux sessions, nvim editor, and fzf fuzzy finder to create efficient workflows. Environment variables like `NOTES_DIR` and `NVIM_BIN` configure behavior. The module uses bash scripting exclusively with no external dependencies beyond standard tools and configured binaries.
 <!-- docgen:end id=bash_additions:overview -->
 
-<!-- docgen:begin id=bash_additions:reference scope=bash_additions hash=cff35575ccfd -->
+<!-- docgen:begin id=bash_additions:reference scope=bash_additions hash=e32cffcbed94 -->
 ## Reference
 
 ### `aws_cli_extd.sh`
@@ -39,6 +39,7 @@ Most scripts depend on standard Unix tools and environment variables like `NVIM_
 - **`nvfsextd`** (function)
 - **`yesterday`** (function)
 - **`freplace`** (function)
+- **`searchdir`** (function)
 
 ### `clctl.sh`
 
@@ -83,7 +84,7 @@ Most scripts depend on standard Unix tools and environment variables like `NVIM_
 - **`nvnotes`** (function)
 - **`codenotes`** (function)
 - **`notegrep`** (function)
-- **`search_notes`** (function): Live content search over $NOTES_DIR (like telescope live_grep), opens the match in $NVIM_BIN. clctl's task workspaces (YYYY/MM/DD/workspaces/) only hold symlinks to notes found elsewhere, so they are skipped: with --follow every linked note would match twice.
+- **`searchnotes`** (function): Live content search over $NOTES_DIR (like telescope live_grep), opens the match in $NVIM_BIN. clctl's task workspaces (YYYY/MM/DD/workspaces/) only hold symlinks to notes found elsewhere, so they are skipped: with --follow every linked note would match twice.
 
 ### `tfctl.sh`
 
