@@ -143,3 +143,8 @@ vim.keymap.set('n', '[[', function()
   vim.fn.search(pattern, 'bW')
 end, { buffer = true, desc = "Jump to previous heading (exact count)" })
 
+
+-- Treat relative line movements larger than 1 as a jump
+vim.keymap.set("n", "k", "v:count > 1 ? \"m'\" . v:count . 'k' : 'k'", { expr = true, silent = true })
+vim.keymap.set("n", "j", "v:count > 1 ? \"m'\" . v:count . 'j' : 'j'", { expr = true, silent = true })
+
