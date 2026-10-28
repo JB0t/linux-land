@@ -18,6 +18,15 @@ search_dirs:
   - "{{ home }}/git"
   - "{{ home }}/workspace"
 
+# How the target gets linux-land's files:
+#   link: link $HOME into this checkout (setting up the machine you run on)
+#   copy: copy the checkout's tracked files to linux_land_copy_dir on the
+#         target and link $HOME into that copy, so a remote machine needs no
+#         checkout or GitHub access. Re-run setup here to update it.
+# Defaults to link for a local connection, copy for any other.
+linux_land_mode: "{{ 'link' if ansible_connection | default('ssh') == 'local' else 'copy' }}"
+linux_land_copy_dir: "{{ home }}/.local/share/linux-land"
+
 apt_packages:
   - git
   - curl
@@ -29,9 +38,10 @@ apt_packages:
   - ripgrep
   - fd-find
   - jq
+  - ncdu
   - python3-venv
 
-# Files and dirs in this repo, symlinked into $HOME
+# Files and dirs in this repo (or its copy), symlinked into $HOME
 dotfile_links:
   - { src: .bashrc, dest: .bashrc }
   - { src: .bash_additions, dest: .bash_additions }

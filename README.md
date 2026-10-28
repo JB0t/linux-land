@@ -56,7 +56,7 @@ up new config or tool versions on a machine that is already set up.
 | `dotfiles` | symlinks `.bashrc`, `.bash_additions`, `bash_additions`, `.tmux.conf`, tx's opts and `nvim` into `$HOME`; seeds per-machine files |
 | `tmux` | tpm and the plugins listed in `.tmux.conf` |
 | `nvim` | plugins at the commits in `nvim/lazy-lock.json`, Mason LSP servers and delve, treesitter parsers |
-| `verify` | checks every tool runs, links point here, a new shell loads, and nvim starts with treesitter active |
+| `verify` | checks every tool runs, links point here (or into the copy), a new shell loads, and nvim starts with treesitter active |
 
 Versions live in `ansible/group_vars/all.yml`. They default to `latest`; pin
 one (e.g. `nvim_version: v0.12.5`) to make a machine reproducible. CPU
@@ -64,6 +64,24 @@ architecture (x86_64 or aarch64) and WSL are detected from the host.
 
 Anything already at a path setup wants to link is moved aside to
 `<path>.bak.<timestamp>` first, never overwritten.
+
+### Another machine, from here
+
+The target needs no checkout and no GitHub access, only SSH from here (as a
+user with sudo), `python3` with `python3-apt`, and `git` for a `--check` run:
+
+```bash
+./setup.sh -i 10.5.0.15, -u jb0t          # trailing comma: a host, not an inventory file
+./setup.sh -i host, -u me --ask-become-pass   # if sudo there needs a password
+```
+
+For any connection that isn't local, setup copies this checkout's tracked
+files (uncommitted edits included) to `~/.local/share/linux-land` on the
+target and links `$HOME` into that copy. To update the machine, re-run
+setup here; a copy that's already current is left alone. If anything in the
+copy was edited on the target, the whole copy is moved to
+`~/.local/share/linux-land.bak.<timestamp>` before the new one goes in.
+Set `-e linux_land_mode=link` or `copy` to override the choice.
 
 ### Per-machine files
 

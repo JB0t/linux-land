@@ -167,12 +167,14 @@
   register: node_install
   changed_when: "'is already installed' not in node_install.stdout"
 
+# In a check run on a new machine nvm isn't installed yet, so allow that
 - name: Read the default Node bin dir
   ansible.builtin.shell: '. "{{ nvm_dir }}/nvm.sh" && dirname "$(nvm which default)"'
   args:
     executable: /bin/bash
   register: node_bin
   changed_when: false
+  failed_when: node_bin.rc != 0 and not ansible_check_mode
   check_mode: false
 
 # tree-sitter CLI: nvim-treesitter's main branch builds parsers with it

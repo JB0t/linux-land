@@ -10,6 +10,7 @@
 #   ./setup.sh --check --diff   # show what would change, change nothing
 #   ./setup.sh --tags dotfiles  # one part: packages, tools, dotfiles, tmux, nvim, verify
 #   ./setup.sh -e notes_dir=~/work/notes   # override a value from group_vars/all.yml
+#   ./setup.sh -i 10.5.0.15, -u jb0t       # set up another machine (no checkout there)
 #
 # Any arguments are passed to ansible-playbook.
 set -euo pipefail
@@ -24,9 +25,16 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 
+# -i: setting up another machine, which needs nothing from this one's apt or sudo
+remote=false
+for arg in "$@"; do
+    case "$arg" in -i|-i*|--inventory|--inventory=*) remote=true ;; esac
+done
+
 # Ansible's apt module runs under the system python3 with python3-apt.
-# Ubuntu desktop and server images have both; minimal images may not.
-if ! /usr/bin/python3 -c 'import apt' 2>/dev/null; then
+# Ubuntu desktop and server images have both; minimal images may not (on
+# another machine, install them there first).
+if ! $remote && ! /usr/bin/python3 -c 'import apt' 2>/dev/null; then
     echo "Installing python3 and python3-apt (needed by Ansible's apt module)..."
     sudo apt-get update -qq
     sudo apt-get install -y -qq python3 python3-apt
@@ -43,9 +51,11 @@ if [ -z "$uv" ]; then
     fi
 fi
 
-# Ask for the sudo password only when sudo would need one
+# Ask for the sudo password only when sudo would need one. Sudo here says
+# nothing about another machine (-i), so add --ask-become-pass yourself if
+# its sudo needs a password.
 become_args=()
-if ! sudo -n true 2>/dev/null; then
+if ! $remote && ! sudo -n true 2>/dev/null; then
     become_args=(--ask-become-pass)
 fi
 

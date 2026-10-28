@@ -8,17 +8,19 @@
           - ansible_facts['pkg_mgr'] == 'apt'
           - ansible_facts['architecture'] in arch_names
           - ansible_facts['user_id'] != 'root'
+          - linux_land_mode in ['link', 'copy']
         fail_msg: >-
           linux-land supports apt-based systems on x86_64 or aarch64, run as a
-          normal user with sudo. Found {{ ansible_facts['distribution'] }} with
-          {{ ansible_facts['pkg_mgr'] }} on {{ ansible_facts['architecture'] }} as {{ ansible_facts['user_id'] }}.
+          normal user with sudo, with linux_land_mode link or copy. Found
+          {{ ansible_facts['distribution'] }} with {{ ansible_facts['pkg_mgr'] }} on
+          {{ ansible_facts['architecture'] }} as {{ ansible_facts['user_id'] }}, mode {{ linux_land_mode }}.
         quiet: true
       tags: always
 
     - name: Work out paths and host details
       ansible.builtin.set_fact:
         home: "{{ ansible_facts['user_dir'] }}"
-        linux_land_dir: "{{ playbook_dir | dirname | realpath }}"
+        linux_land_repo: "{{ playbook_dir | dirname | realpath }}"  # this checkout, where the playbook runs
         arch: "{{ arch_names[ansible_facts['architecture']] }}"
         is_wsl: "{{ 'microsoft' in ansible_facts['kernel'] | lower }}"
         nvim_dir: "/opt/nvim-linux-{{ arch_names[ansible_facts['architecture']].nvim }}"
@@ -26,10 +28,17 @@
         backup_suffix: ".bak.{{ ansible_facts['date_time'].iso8601_basic_short }}"
       tags: always
 
-    - name: Checksum nvim/lazy-lock.json before anything runs
-      ansible.builtin.stat:
-        path: "{{ linux_land_dir }}/nvim/lazy-lock.json"
-      register: lockfile_at_start
+    # Where the target reads linux-land from: this checkout, or its copy there
+    - name: Work out linux-land's path on the target
+      ansible.builtin.set_fact:
+        linux_land_dir: "{{ linux_land_repo if linux_land_mode == 'link' else linux_land_copy_dir }}"
+      tags: always
+
+    # Lazy rewrites the lockfile in place; the nvim role puts this back and
+    # verify checks setup ended with it.
+    - name: Read nvim/lazy-lock.json before anything runs
+      ansible.builtin.set_fact:
+        lazy_lock_at_start: "{{ lookup('ansible.builtin.file', linux_land_repo ~ '/nvim/lazy-lock.json', rstrip=false) }}"
       tags: always
 
   roles:

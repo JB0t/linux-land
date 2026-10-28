@@ -13,6 +13,7 @@ for d in /opt/nvim-linux-x86_64/bin /opt/nvim-linux-arm64/bin; do
     fi
 done
 export PATH="$HOME/.local/bin:$PATH"
+export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
 
 # If not running interactively, don't do anything
 case $- in

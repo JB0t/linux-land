@@ -1,10 +1,12 @@
 ---
+# In a check run on a new machine nvm isn't installed yet, so allow that
 - name: Read the default Node bin dir
   ansible.builtin.shell: '. "{{ nvm_dir }}/nvm.sh" && dirname "$(nvm which default)"'
   args:
     executable: /bin/bash
   register: nvim_node_bin
   changed_when: false
+  failed_when: nvim_node_bin.rc != 0 and not ansible_check_mode
   check_mode: false
 
 - name: Set the PATH nvim's plugins build and run with
@@ -13,26 +15,16 @@
 
 # Plugins at the commits pinned in nvim/lazy-lock.json. Lazy rewrites the
 # lockfile from whatever is checked out, so a plugin that couldn't switch
-# (e.g. a branch change) leaves it dirty; if it was clean beforehand, put it
-# back and restore once more.
-- name: Check whether nvim/lazy-lock.json has local changes
-  ansible.builtin.command: git -C "{{ linux_land_dir }}" status --porcelain -- nvim/lazy-lock.json
-  register: lock_before
-  changed_when: false
-  check_mode: false
+# (e.g. a branch change) changes it; put back what was there before setup
+# and restore once more.
 
 # lazy_init.lua bootstraps lazy.nvim from its stable branch, and restore
 # doesn't move lazy.nvim itself, so put it at the pinned commit first.
-- name: Read nvim/lazy-lock.json
-  ansible.builtin.slurp:
-    src: "{{ linux_land_dir }}/nvim/lazy-lock.json"
-  register: lazy_lock
-
 - name: Check out lazy.nvim at the pinned commit
   ansible.builtin.git:
     repo: https://github.com/folke/lazy.nvim.git
     dest: "{{ home }}/.local/share/nvim/lazy/lazy.nvim"
-    version: "{{ (lazy_lock.content | b64decode | from_json)['lazy.nvim'].commit }}"
+    version: "{{ (lazy_lock_at_start | from_json)['lazy.nvim'].commit }}"
 
 - name: Record plugin commits before restoring
   ansible.builtin.shell: &plugin_heads >-
@@ -51,17 +43,21 @@
     PATH: "{{ nvim_env_path }}"
   changed_when: false
 
-- name: Check whether the restore left the lockfile dirty
-  ansible.builtin.command: git -C "{{ linux_land_dir }}" status --porcelain -- nvim/lazy-lock.json
+- name: Check whether the restore changed the lockfile
+  ansible.builtin.stat:
+    path: "{{ linux_land_dir }}/nvim/lazy-lock.json"
   register: lock_after
-  changed_when: false
-  check_mode: false
 
 - name: Put the lockfile back and restore again
-  when: lock_before.stdout == '' and lock_after.stdout != ''
+  when:
+    - not ansible_check_mode
+    - lock_after.stat.checksum | default('') != lazy_lock_at_start | hash('sha1')
   block:
-    - name: Reset nvim/lazy-lock.json
-      ansible.builtin.command: git -C "{{ linux_land_dir }}" checkout -- nvim/lazy-lock.json
+    - name: Put back nvim/lazy-lock.json
+      ansible.builtin.copy:
+        content: "{{ lazy_lock_at_start }}"
+        dest: "{{ linux_land_dir }}/nvim/lazy-lock.json"
+        mode: "0644"
       changed_when: false
 
     - name: Restore nvim plugins from the lockfile (second pass)

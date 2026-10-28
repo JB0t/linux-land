@@ -19,3 +19,5 @@
     src: "{{ linux_land_dir }}/{{ link.src }}"
     dest: "{{ home }}/{{ link.dest }}"
     state: link
+    # A check run doesn't unpack the copy, so its files aren't there yet
+    force: "{{ ansible_check_mode }}"

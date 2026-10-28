@@ -1,0 +1,107 @@
+---
+# Copy mode: put this checkout's tracked files (uncommitted edits included)
+# at linux_land_dir on the target, for the links to point into. A manifest of
+# their checksums goes with them. A copy that already matches is left alone;
+# one edited on the target is moved to <dir>.bak.<time>, never overwritten.
+
+# The scratch dir is on this machine and gone by the end, so not a change
+- name: Make a scratch dir for the pack
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .linux-land
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  check_mode: false
+  register: pack_dir
+
+- name: Pack and deploy linux-land
+  vars:
+    pack: "{{ pack_dir.path }}"
+  block:
+    # .linux-land.id changes with any file's content or mode, so it says
+    # whether the target's copy is current.
+    - name: Pack the repo's tracked files
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd {{ linux_land_repo | quote }}
+        out={{ pack | quote }}
+        # Tracked files still in the worktree (an uncommitted delete is left out)
+        git ls-files -z | while IFS= read -r -d '' f; do
+          if [ -f "$f" ]; then printf '%s\0' "$f"; fi
+        done > "$out/files"
+        xargs -0 sha1sum -- < "$out/files" > "$out/.linux-land.sha1"
+        { cat "$out/.linux-land.sha1"; xargs -0 stat -c '%a %n' -- < "$out/files"; } |
+          sha1sum | cut -d' ' -f1 > "$out/.linux-land.id"
+        tar -czf "$out/linux-land.tar.gz" --null -T "$out/files" \
+          -C "$out" .linux-land.sha1 .linux-land.id
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      check_mode: false
+
+    # Lists tracked files edited or removed on the target, then files added
+    # there. A dir with no manifest lists everything in it.
+    - name: Look for changes made on the target
+      ansible.builtin.shell: |
+        cd {{ linux_land_dir | quote }} 2>/dev/null || exit 0
+        sha1sum --quiet -c .linux-land.sha1 2>/dev/null | sed 's/: FAILED.*$//'
+        comm -13 <(sed 's/^[0-9a-f]* [ *]//' .linux-land.sha1 2>/dev/null | sort) \
+          <(find . -type f ! -name .linux-land.sha1 ! -name .linux-land.id -printf '%P\n' | sort)
+        true
+      args:
+        executable: /bin/bash
+      register: copy_edits
+      changed_when: false
+      check_mode: false
+
+    - name: Read the target's copy version
+      ansible.builtin.command: cat {{ (linux_land_dir ~ '/.linux-land.id') | quote }}
+      register: copy_id
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Replace the copy
+      when: >-
+        copy_edits.stdout != ''
+        or copy_id.stdout != lookup('ansible.builtin.file', pack ~ '/.linux-land.id')
+      block:
+        - name: Move the copy aside, it was edited on the target
+          when: copy_edits.stdout != ''
+          ansible.builtin.command: mv {{ linux_land_dir | quote }} {{ (linux_land_dir ~ backup_suffix) | quote }}
+          changed_when: true
+
+        - name: Report what was edited on the target
+          when: copy_edits.stdout != ''
+          ansible.builtin.debug:
+            msg: "Edited on the target, kept in {{ linux_land_dir }}{{ backup_suffix }}: {{ copy_edits.stdout_lines }}"
+
+        - name: Remove the old copy
+          ansible.builtin.file:
+            path: "{{ linux_land_dir }}"
+            state: absent
+
+        - name: Create the copy's dir
+          ansible.builtin.file:
+            path: "{{ linux_land_dir }}"
+            state: directory
+            mode: "0755"
+
+        # The two tasks above already show the change in a check run
+        - name: Unpack linux-land on the target
+          ansible.builtin.unarchive:
+            src: "{{ pack }}/linux-land.tar.gz"
+            dest: "{{ linux_land_dir }}"
+          when: not ansible_check_mode
+  always:
+    - name: Remove the scratch dir
+      ansible.builtin.file:
+        path: "{{ pack_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      check_mode: false

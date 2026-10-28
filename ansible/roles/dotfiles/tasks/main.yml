@@ -35,6 +35,10 @@
     - "{{ home }}/.tmux/tx/sessions/normal"
     - "{{ notes_dir }}"
 
+- name: Copy linux-land to the target
+  ansible.builtin.include_tasks: copy.yml
+  when: linux_land_mode == 'copy'
+
 - name: Link dotfiles into $HOME
   ansible.builtin.include_tasks: link.yml
   loop: "{{ dotfile_links }}"
@@ -66,3 +70,5 @@
   loop: "{{ tx_init_sessions | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
+  # A copy isn't somewhere to work on linux-land
+  when: item.key != 'linux-land' or linux_land_mode == 'link'
