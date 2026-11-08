@@ -3,7 +3,7 @@
 # Requires: aws cli, fzf, aws-sso-util
 
 alogin(){
-    aws-sso-util login default
+    aws-sso-util login "$@"
 }
 
 _aws_profile_list(){

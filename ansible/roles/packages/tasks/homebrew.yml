@@ -1,0 +1,30 @@
+---
+# Only touch Homebrew when something is missing, as with apt.
+# brew runs as you, never with sudo.
+- name: List installed Homebrew formulae
+  ansible.builtin.command: brew list --formula -1
+  register: brew_installed
+  changed_when: false
+  check_mode: false
+
+- name: Install missing Homebrew formulae
+  vars:
+    missing: "{{ brew_packages | reject('in', brew_installed.stdout_lines) | list }}"
+  when: missing | length > 0
+  ansible.builtin.command:
+    argv: "{{ ['brew', 'install'] + missing }}"
+
+# Terminal opens the login shell, which chsh only accepts from /etc/shells
+- name: Make Homebrew's bash the login shell
+  when: macos_bash_login_shell
+  become: true
+  block:
+    - name: List Homebrew's bash in /etc/shells
+      ansible.builtin.lineinfile:
+        path: /etc/shells
+        line: "{{ brew_prefix }}/bin/bash"
+
+    - name: Set the login shell to Homebrew's bash
+      ansible.builtin.user:
+        name: "{{ ansible_facts['user_id'] }}"
+        shell: "{{ brew_prefix }}/bin/bash"

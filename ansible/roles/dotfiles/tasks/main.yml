@@ -41,7 +41,7 @@
 
 - name: Link dotfiles into $HOME
   ansible.builtin.include_tasks: link.yml
-  loop: "{{ dotfile_links }}"
+  loop: "{{ all_dotfile_links }}"
   loop_control:
     loop_var: link
     label: "~/{{ link.dest }}"

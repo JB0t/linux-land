@@ -2,6 +2,16 @@
 # Each tool: work out the wanted version, read the installed one, and only
 # download when they differ.
 
+# A fresh Mac (Apple silicon) may have neither; Linux always has both
+- name: Create install dirs
+  become: true
+  ansible.builtin.file:  # noqa: risky-file-permissions
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - /opt
+    - /usr/local/bin
+
 # Neovim, into /opt (found by .bashrc via $NVIM_BIN)
 - name: Resolve latest Neovim release
   ansible.builtin.uri:
@@ -31,7 +41,7 @@
 
     - name: Download and unpack Neovim {{ nvim_tag }}
       ansible.builtin.unarchive:
-        src: "https://github.com/neovim/neovim/releases/download/{{ nvim_tag }}/nvim-linux-{{ arch.nvim }}.tar.gz"
+        src: "https://github.com/neovim/neovim/releases/download/{{ nvim_tag }}/nvim-{{ arch.nvim }}.tar.gz"
         dest: /opt
         remote_src: true
 
@@ -64,7 +74,7 @@
 
     - name: Download and unpack {{ go_tag }}
       ansible.builtin.unarchive:
-        src: "https://go.dev/dl/{{ go_tag }}.linux-{{ arch.go }}.tar.gz"
+        src: "https://go.dev/dl/{{ go_tag }}.{{ arch.go }}.tar.gz"
         dest: /usr/local
         remote_src: true
 
@@ -90,7 +100,7 @@
   when: yq_installed.rc != 0 or not yq_installed.stdout.endswith('version ' ~ yq_tag)
   become: true
   ansible.builtin.get_url:
-    url: "https://github.com/mikefarah/yq/releases/download/{{ yq_tag }}/yq_linux_{{ arch.yq }}"
+    url: "https://github.com/mikefarah/yq/releases/download/{{ yq_tag }}/yq_{{ arch.yq }}"
     dest: /usr/local/bin/yq
     mode: "0755"
     force: true
@@ -181,7 +191,7 @@
 - name: Check for tree-sitter-cli
   ansible.builtin.command: npm ls -g --depth=0 tree-sitter-cli
   environment:
-    PATH: "{{ node_bin.stdout }}:{{ ansible_facts['env'].PATH }}"
+    PATH: "{{ node_bin.stdout }}:{{ host_path }}"
   register: ts_cli
   changed_when: false
   failed_when: false
@@ -190,7 +200,7 @@
 - name: Install tree-sitter-cli
   ansible.builtin.command: npm install -g tree-sitter-cli
   environment:
-    PATH: "{{ node_bin.stdout }}:{{ ansible_facts['env'].PATH }}"
+    PATH: "{{ node_bin.stdout }}:{{ host_path }}"
   when: ts_cli.rc != 0
 
 # git prompt helper, sourced by bash_additions/git_ps1.sh

@@ -194,7 +194,7 @@ tx_create(){
 tx_bind(){
     all_sessions=$(_tx_all_sessions)
     # TODO - need to be able to parse argument - either a bind number or session name or both or 'list' to list current binds
-    current_binds=$(awk '/bind -n M-[0-9] switch -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
+    current_binds=$(awk '/bind -n M-[0-9] switch(-client)? -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
     session_select=""
     bind_select=""
     case "$1" in
@@ -247,13 +247,13 @@ tx_bind(){
         fi
         if [[ ! -z $bind_select ]]; then
             echo "Binding session $session_select to $bind_select"
-            echo "bind -n $bind_select switch -t \"$(awk -F: '{print$1}'<<<$session_select)\"" >> $TMUX_CONF
+            echo "bind -n $bind_select switch-client -t \"$(awk -F: '{print$1}'<<<$session_select)\"" >> $TMUX_CONF
             tmux source $TMUX_CONF
         else
             echo "Doing nothing."
         fi
     fi
-    current_binds=$(awk '/bind -n M-[0-9] switch -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
+    current_binds=$(awk '/bind -n M-[0-9] switch(-client)? -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
     echo "Current binds:"
     echo "$current_binds"
 }
@@ -267,7 +267,7 @@ tx_delete(){
     session=$(_tx_select_session $1)
     rm $TX_DIR/sessions/$session
     echo "Removed '$session' from tx"
-    current_binds=$(awk '/bind -n M-[0-9] switch -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
+    current_binds=$(awk '/bind -n M-[0-9] switch(-client)? -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
     if grep -q "$session" <<<$current_binds; then
         tx_unbind "$session"
     fi
@@ -339,7 +339,7 @@ EOF
     if [ "$session_exists" ]; then
         s_name="notes"
     fi
-    tmux switch -t $s_name
+    tmux switch-client -t $s_name
 }
 
 tx_load(){
@@ -355,7 +355,7 @@ tx_load(){
     if [ -z "$session_exists" ]; then
         _tx_build_session "$s_name" "$s_dir"
     else
-        tmux switch -t "$s_name"
+        tmux switch-client -t "$s_name"
     fi
 }
 
@@ -556,7 +556,7 @@ tx_unbind(){
             return
         fi
     done
-    current_binds=$(awk '/bind -n M-[0-9] switch -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
+    current_binds=$(awk '/bind -n M-[0-9] switch(-client)? -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
     select=""
     if [[ ! -z $1 ]];then
         select=$(grep "$1"<<<$current_binds)
@@ -569,11 +569,11 @@ tx_unbind(){
     fi
     unbind_select=$(awk '{print$1}'<<<$select)
     echo "Unbinding $unbind_select (was $(awk '{print$3}'<<<$select)).."
-    sed -i "s/bind -n $unbind_select switch -t.*/unbind -n $unbind_select/" $TMUX_CONF
+    sed -i "s/bind -n $unbind_select switch\(-client\)\? -t.*/unbind -n $unbind_select/" $TMUX_CONF
     tmux source $TMUX_CONF
     sed -i "/unbind -n $unbind_select/d" $TMUX_CONF
     tmux source $TMUX_CONF
-    current_binds=$(awk '/bind -n M-[0-9] switch -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
+    current_binds=$(awk '/bind -n M-[0-9] switch(-client)? -t/{printf "%s - %s\n",$3,$6}' $TMUX_CONF)
     echo "Current binds:"
     echo "$current_binds"
 }

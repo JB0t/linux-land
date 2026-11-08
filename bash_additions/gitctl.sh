@@ -264,7 +264,7 @@ ghto(){
             _tx_build_session "$s_name" "$repo"
         else
             echo "Session with name $s_name already exists."
-            tmux switch -t "$s_name"
+            tmux switch-client -t "$s_name"
         fi
     else
         cd $repo

@@ -11,7 +11,7 @@
 
 - name: Set the PATH nvim's plugins build and run with
   ansible.builtin.set_fact:
-    nvim_env_path: "{{ nvim_dir }}/bin:{{ nvim_node_bin.stdout }}:/usr/local/go/bin:{{ home }}/go/bin:{{ ansible_facts['env'].PATH }}"
+    nvim_env_path: "{{ nvim_dir }}/bin:{{ nvim_node_bin.stdout }}:/usr/local/go/bin:{{ home }}/go/bin:{{ host_path }}"
 
 # Plugins at the commits pinned in nvim/lazy-lock.json. Lazy rewrites the
 # lockfile from whatever is checked out, so a plugin that couldn't switch

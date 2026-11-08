@@ -41,6 +41,47 @@ apt_packages:
   - ncdu
   - python3-venv
 
+# macOS: Homebrew formulae instead. The GNU tools go ahead of the BSD ones on
+# PATH (.bashrc), so bash_additions and tx behave as they do on Linux; bash
+# 5 because /bin/bash is 3.2. pbcopy/pbpaste stand in for xclip, and the
+# Xcode Command Line Tools (Homebrew needs them) for build-essential.
+brew_packages:
+  - git
+  - bash
+  - bash-completion@2
+  - coreutils
+  - findutils
+  - gnu-sed
+  - gnu-tar
+  - grep
+  - tmux
+  - ripgrep
+  - fd
+  - jq
+  - ncdu
+
+# macOS: make Homebrew's bash the login shell, so Terminal (and tmux) start
+# the same bash config as Linux. false leaves the login shell alone.
+macos_bash_login_shell: true
+
+# macOS: Ghostty's config, written by the terminal role to
+# ~/.config/ghostty/config, matching the GNOME Terminal profile on the Linux
+# machines. Each key is a Ghostty option (ghostty +show-config --docs).
+ghostty_config:
+  font-family: JetBrainsMono Nerd Font
+  font-size: 12
+  background: "#000000"
+  foreground: "#ffffff"
+  bold-color: "#c792ea"
+  background-opacity: 0.85         # GNOME's is 0.72 (28% transparency)
+  cursor-style-blink: false
+  macos-option-as-alt: true        # tmux's Alt bindings and Alt+V
+ghostty_command: tmux              # exec'd by a login bash
+terminal_casks:
+  - ghostty
+  - font-jetbrains-mono-nerd-font
+
+
 # Files and dirs in this repo (or its copy), symlinked into $HOME
 dotfile_links:
   - { src: .bashrc, dest: .bashrc }
@@ -50,7 +91,14 @@ dotfile_links:
   - { src: .tmux/tx/opts, dest: .tmux/tx/opts }
   - { src: .tmux/tx/opts_dir, dest: .tmux/tx/opts_dir }
   - { src: nvim, dest: .config/nvim }
-  - { src: bin/machine, dest: .local/bin/machine }
+
+# Links for one OS only, on top of dotfile_links
+dotfile_links_by_system:
+  Linux:
+    - { src: bin/machine, dest: .local/bin/machine }  # apt and Ubuntu only
+  Darwin:
+    # macOS terminals start login shells, which read ~/.bash_profile, not ~/.bashrc
+    - { src: .bash_profile, dest: .bash_profile }
 
 # tx sessions created by `tx init`. Seeded once; sessions are per machine.
 tx_init_sessions:
@@ -81,7 +129,17 @@ treesitter_parsers:
   - markdown
   - markdown_inline
 
-# Release asset naming per CPU architecture
+# Release asset naming per OS and CPU architecture (ansible_facts['system']
+# and ['architecture']: Apple silicon reports arm64, Linux on ARM aarch64)
 arch_names:
-  x86_64: { nvim: x86_64, go: amd64, yq: amd64 }
-  aarch64: { nvim: arm64, go: arm64, yq: arm64 }
+  Linux:
+    x86_64: { nvim: linux-x86_64, go: linux-amd64, yq: linux_amd64 }
+    aarch64: { nvim: linux-arm64, go: linux-arm64, yq: linux_arm64 }
+  Darwin:
+    x86_64: { nvim: macos-x86_64, go: darwin-amd64, yq: darwin_amd64 }
+    arm64: { nvim: macos-arm64, go: darwin-arm64, yq: darwin_arm64 }
+
+# macOS: Homebrew's prefix per CPU architecture
+brew_prefixes:
+  x86_64: /usr/local
+  arm64: /opt/homebrew

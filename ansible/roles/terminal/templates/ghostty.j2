@@ -1,0 +1,7 @@
+# ~/.config/ghostty/config, written by linux-land's terminal role on every
+# run: change ghostty_config in ansible/group_vars/all.yml instead.
+{% for key, value in ghostty_config.items() %}
+{{ key }} = {{ value | string | lower if value is boolean else value }}
+{% endfor %}
+# Start tmux in a login shell, so it gets the full PATH (GNOME: bash -c tmux)
+command = {{ brew_prefix }}/bin/bash -lc 'exec {{ ghostty_command }}'

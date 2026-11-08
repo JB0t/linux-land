@@ -1,19 +1,98 @@
 ---
 - name: Set up linux-land
   hosts: all
+  # macOS: Homebrew's and the GNU tools' dirs on PATH for every task (set in
+  # pre_tasks); Linux keeps the connection's environment
+  environment: "{{ host_env | default({}) }}"
+  # Facts are gathered below, once the Python to gather them with is known
+  gather_facts: false
   pre_tasks:
+    # Raw commands until there is a Python to run modules with
+    - name: Read the target's OS
+      ansible.builtin.raw: uname -s
+      register: target_os
+      changed_when: false
+      check_mode: false
+      tags: always
+
+    # macOS: the Command Line Tools give git, /usr/bin/python3 and the
+    # compiler Homebrew builds with when it has no bottle for this macOS;
+    # Homebrew refuses ones older than the macOS release. Software Update
+    # offers them only while this flag file exists, and keeps offering the
+    # newest even once it's installed, so compare with what's installed.
+    - name: Look for a Command Line Tools install or update
+      when: target_os.stdout | trim == 'Darwin'
+      ansible.builtin.raw: |
+        flag=/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+        touch "$flag"
+        label=$(softwareupdate --list 2>/dev/null |
+            sed -n 's/^\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -1)
+        rm -f "$flag"
+        have=$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null | sed -n 's/^version: //p')
+        want=${label##*-}  # "Command Line Tools for Xcode-15.3" -> 15.3
+        [ -n "$label" ] || exit 0
+        if [ -z "$have" ] || [ "$(printf '%s\n' "$want" "$have" | sort -V | tail -1)" != "$have" ]; then
+            echo "$label"
+        fi
+      register: clt_update
+      changed_when: false
+      check_mode: false
+      tags: always
+
+    - name: Install {{ clt_update.stdout | default('') | trim }}
+      when:
+        - target_os.stdout | trim == 'Darwin'
+        - clt_update.stdout | trim != ''
+      become: true
+      ansible.builtin.raw: |
+        flag=/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+        touch "$flag"
+        softwareupdate --install {{ clt_update.stdout | trim | quote }} 2>&1
+        rc=$?
+        rm -f "$flag"
+        exit $rc
+      tags: always
+
+    # Linux: the system python3, which has python3-apt. macOS: the first
+    # python3 that Ansible supports (3.9+); older Command Line Tools have 3.8.
+    - name: Find the Python to run modules with
+      when: target_os.stdout | trim == 'Darwin'
+      ansible.builtin.raw: |
+        for p in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+            "$p" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null && { echo "$p"; exit 0; }
+        done
+        echo "No Python 3.9 or newer here; run: brew install python" >&2
+        exit 1
+      register: target_python
+      changed_when: false
+      check_mode: false
+      tags: always
+
+    - name: Use that Python
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: >-
+          {{ target_python.stdout_lines[-1] | trim if target_os.stdout | trim == 'Darwin' else '/usr/bin/python3' }}
+      tags: always
+
+    - name: Gather facts
+      ansible.builtin.setup:
+      tags: always
+
     - name: Check this machine is supported
       ansible.builtin.assert:
         that:
-          - ansible_facts['pkg_mgr'] == 'apt'
-          - ansible_facts['architecture'] in arch_names
+          - (ansible_facts['system'] == 'Linux' and ansible_facts['pkg_mgr'] == 'apt')
+            or (ansible_facts['system'] == 'Darwin' and ansible_facts['pkg_mgr'] == 'homebrew')
+          - ansible_facts['architecture'] in arch_names[ansible_facts['system']] | default({})
           - ansible_facts['user_id'] != 'root'
           - linux_land_mode in ['link', 'copy']
         fail_msg: >-
-          linux-land supports apt-based systems on x86_64 or aarch64, run as a
-          normal user with sudo, with linux_land_mode link or copy. Found
-          {{ ansible_facts['distribution'] }} with {{ ansible_facts['pkg_mgr'] }} on
+          linux-land supports apt-based Linux on x86_64 or aarch64, and macOS with
+          Homebrew on arm64 or x86_64, run as a normal user with sudo, with
+          linux_land_mode link or copy. Found {{ ansible_facts['distribution'] }}
+          ({{ ansible_facts['system'] }}) with {{ ansible_facts['pkg_mgr'] }} on
           {{ ansible_facts['architecture'] }} as {{ ansible_facts['user_id'] }}, mode {{ linux_land_mode }}.
+          On a Mac, install Homebrew first (setup.sh does it when run on the Mac itself).
         quiet: true
       tags: always
 
@@ -21,11 +100,32 @@
       ansible.builtin.set_fact:
         home: "{{ ansible_facts['user_dir'] }}"
         linux_land_repo: "{{ playbook_dir | dirname | realpath }}"  # this checkout, where the playbook runs
-        arch: "{{ arch_names[ansible_facts['architecture']] }}"
+        arch: "{{ arch_names[ansible_facts['system']][ansible_facts['architecture']] }}"
+        is_macos: "{{ ansible_facts['system'] == 'Darwin' }}"
         is_wsl: "{{ 'microsoft' in ansible_facts['kernel'] | lower }}"
-        nvim_dir: "/opt/nvim-linux-{{ arch_names[ansible_facts['architecture']].nvim }}"
+        nvim_dir: "/opt/nvim-{{ arch_names[ansible_facts['system']][ansible_facts['architecture']].nvim }}"
         nvm_dir: "{{ ansible_facts['user_dir'] }}/.config/nvm"
         backup_suffix: ".bak.{{ ansible_facts['date_time'].iso8601_basic_short }}"
+        all_dotfile_links: "{{ dotfile_links + dotfile_links_by_system[ansible_facts['system']] | default([]) }}"
+      tags: always
+
+    # The same dirs .bashrc puts first on macOS. A non-interactive SSH or
+    # local session has neither, and the playbook needs brew, GNU tar
+    # (unarchive), sha1sum and find -printf (copy mode) and bash 5 (verify).
+    - name: Work out the PATH tasks run with
+      vars:
+        prefix: "{{ brew_prefixes[ansible_facts['architecture']] | default('') if is_macos else '' }}"
+        gnubin: "{{ ['coreutils', 'findutils', 'gnu-sed', 'grep', 'gnu-tar'] | map('regex_replace', '^(.*)$', prefix ~ '/opt/\\1/libexec/gnubin') | list }}"
+      ansible.builtin.set_fact:
+        brew_prefix: "{{ prefix }}"
+        host_path: >-
+          {{ (gnubin + [prefix ~ '/bin', prefix ~ '/sbin', ansible_facts['env'].PATH]) | join(':')
+             if is_macos else ansible_facts['env'].PATH }}
+      tags: always
+
+    - name: Set the environment tasks run with
+      ansible.builtin.set_fact:
+        host_env: "{{ {'PATH': host_path, 'HOMEBREW_NO_ENV_HINTS': '1'} if is_macos else {} }}"
       tags: always
 
     # Where the target reads linux-land from: this checkout, or its copy there
@@ -46,5 +146,6 @@
     - { role: tools, tags: [tools] }
     - { role: dotfiles, tags: [dotfiles] }
     - { role: tmux, tags: [tmux] }
+    - { role: terminal, tags: [terminal], when: is_macos }
     - { role: nvim, tags: [nvim] }
     - { role: verify, tags: [verify] }

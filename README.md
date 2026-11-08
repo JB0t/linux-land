@@ -43,24 +43,75 @@ up new config or tool versions on a machine that is already set up.
 
 ```bash
 ./setup.sh --check --diff     # show what would change, change nothing
-./setup.sh --tags dotfiles    # one part: packages, tools, dotfiles, tmux, nvim, verify
+./setup.sh --tags dotfiles    # one part: packages, tools, dotfiles, tmux, terminal, nvim, verify
 ./setup.sh -e notes_dir=~/work/notes   # override a value in ansible/group_vars/all.yml
 ```
+
+### macOS
+
+Same command, in Terminal on the Mac (Apple silicon or Intel):
+
+```bash
+git clone https://github.com/JB0t/linux-land.git ~/git/JB0t/linux-land
+cd ~/git/JB0t/linux-land
+./setup.sh
+```
+
+If Homebrew is missing, setup.sh installs it first (that also installs the
+Xcode Command Line Tools, which give `git`, a C compiler and the
+`/usr/bin/python3` Ansible runs under). After that it's the same playbook, with:
+
+- The Command Line Tools installed, or updated to the newest Software Update
+  offers for this macOS, before anything else. Homebrew refuses tools older
+  than the macOS release, and builds from source with them whatever it has
+  no bottle for (on a macOS it no longer supports, that's most of
+  `brew_packages`, so the first run takes a while).
+
+- Homebrew formulae (`brew_packages`) instead of apt, including GNU
+  `coreutils`, `findutils`, `gnu-sed`, `grep` and `gnu-tar`. `.bashrc` puts
+  them ahead of the BSD tools, so `sed -i`, `find -printf`, `readlink -f`,
+  `timeout` and the rest work the same in `bash_additions` and tx.
+- Homebrew's bash 5 as your login shell (`/bin/bash` is 3.2). Set
+  `-e macos_bash_login_shell=false` to keep zsh.
+- `~/.bash_profile` linked as well: macOS terminals start login shells,
+  which read it, and it sources `~/.bashrc`.
+- The macOS builds of Neovim (`/opt/nvim-macos-<arch>`), Go and yq, picked by
+  CPU architecture.
+- `pbcopy`/`pbpaste` instead of `xclip` (tmux copy mode, `copy`, `paste2`).
+- [Ghostty](https://ghostty.org) (cask `ghostty`), set up like the GNOME
+  Terminal profile: it starts tmux in a login bash, black at 85% opacity,
+  JetBrainsMono Nerd Font 12 (cask `font-jetbrains-mono-nerd-font`), bold
+  text in purple, no cursor blink, and Option as Alt, so tmux's Alt bindings
+  and Alt+V work. Unlike macOS's Terminal (before macOS 26) it shows 24-bit
+  colour, which the tmux theme uses. Open Ghostty, not Terminal.
+- macOS's Ctrl+Space "Select the previous input source" shortcut (System
+  Settings > Keyboard > Keyboard Shortcuts > Input Sources) turned off, so
+  Ctrl+Space reaches tmux as its prefix.
+
+The `terminal` role writes `~/.config/ghostty/config` from `ghostty_config`
+in `ansible/group_vars/all.yml` on every run (checked with Ghostty's own
+validator first), so change it there. Cmd+Shift+, reloads it in Ghostty.
+
+To set up a Mac from Linux instead (`./setup.sh -i jb0t-mba.local, -u jb0t
+--ask-become-pass`, copy mode), turn on Remote Login on the Mac and install
+Homebrew there first.
 
 ### What it does
 
 | Role | What |
 | --- | --- |
-| `packages` | apt packages (`git`, `tmux`, `ripgrep`, `fd-find`, `jq`, `xclip`, ...) |
+| `packages` | apt packages (`git`, `tmux`, `ripgrep`, `fd-find`, `jq`, `xclip`, ...); on macOS Homebrew formulae, and Homebrew's bash as login shell |
 | `tools` | Neovim into `/opt`, Go into `/usr/local/go`, yq, fzf (`~/.fzf`), nvm + Node LTS, tree-sitter-cli, `~/.git-prompt.sh` |
 | `dotfiles` | symlinks `.bashrc`, `.bash_additions`, `bash_additions`, `.tmux.conf`, tx's opts and `nvim` into `$HOME`; seeds per-machine files |
 | `tmux` | tpm and the plugins listed in `.tmux.conf` |
+| `terminal` | macOS only: Ghostty, its config and font, and the Ctrl+Space shortcut turned off |
 | `nvim` | plugins at the commits in `nvim/lazy-lock.json`, Mason LSP servers and delve, treesitter parsers |
 | `verify` | checks every tool runs, links point here (or into the copy), a new shell loads, and nvim starts with treesitter active |
 
 Versions live in `ansible/group_vars/all.yml`. They default to `latest`; pin
 one (e.g. `nvim_version: v0.12.5`) to make a machine reproducible. CPU
-architecture (x86_64 or aarch64) and WSL are detected from the host.
+OS (Linux or macOS), CPU architecture (x86_64, aarch64 or Apple silicon's
+arm64) and WSL are detected from the host.
 
 Anything already at a path setup wants to link is moved aside to
 `<path>.bak.<timestamp>` first, never overwritten.
@@ -88,7 +139,7 @@ Set `-e linux_land_mode=link` or `copy` to override the choice.
 These are seeded once if missing and never overwritten, so edit them freely:
 
 - `~/.bash_extras`: anything specific to this machine (paths, env vars,
-  ssh-agent, extra PATH entries). `~/.bashrc` sources it before
+  extra PATH entries). `~/.bashrc` sources it before
   `~/.bash_additions`. Sets `GIT_ROOT_DIR` and `NOTES_DIR`.
 - `~/.bash_search_dirs`: parent dirs whose subdirs `cdto`, `nvto` and tx's
   finder offer (space-separated).

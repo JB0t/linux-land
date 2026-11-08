@@ -1,16 +1,22 @@
 #!/bin/bash
 
-# Requires: nvim, $NVIM_BIN, xclip
+# Requires: nvim, $NVIM_BIN, xclip (pbcopy/pbpaste on macOS)
 
 alias dirsize='du -h --max-depth=1 | sort -hr'
-alias copy='xclip -sel clip -r'
+if [[ "$OSTYPE" == darwin* ]]; then
+    alias copy="perl -pe 'chomp if eof' | pbcopy"
+else
+    alias copy='xclip -sel clip -r'
+fi
 
-# clip_text: the clipboard as text. xclip reads X's clipboard (on WSL, WSLg keeps it
-# in step with Windows'); when that is empty or there is no X display, Windows' own
-# clipboard is read through powershell.exe.
+# clip_text: the clipboard as text. On macOS pbpaste reads it. Elsewhere xclip reads
+# X's clipboard (on WSL, WSLg keeps it in step with Windows'); when that is empty or
+# there is no X display, Windows' own clipboard is read through powershell.exe.
 clip_text() {
     local text=""
-    if [[ -n "${DISPLAY:-}" ]] && command -v xclip >/dev/null; then
+    if [[ "$OSTYPE" == darwin* ]]; then
+        text="$(pbpaste 2>/dev/null)"
+    elif [[ -n "${DISPLAY:-}" ]] && command -v xclip >/dev/null; then
         text="$(xclip -sel clip -o 2>/dev/null)"
     fi
     if [[ -z "$text" ]] && command -v powershell.exe >/dev/null; then

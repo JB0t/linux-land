@@ -5,10 +5,13 @@
   ansible.builtin.shell: |
     . "{{ nvm_dir }}/nvm.sh"
     set -e
-    export PATH="{{ nvim_dir }}/bin:/usr/local/go/bin:{{ home }}/.fzf/bin:$PATH"
+    # /usr/local/bin for yq: macOS leaves it off a non-interactive PATH. Last,
+    # so an Intel Homebrew there cannot shadow node or tmux.
+    export PATH="{{ nvim_dir }}/bin:/usr/local/go/bin:{{ home }}/.fzf/bin:$PATH:/usr/local/bin"
     for cmd in "nvim --version" "go version" "node --version" "fzf --version" \
                "yq --version" "tree-sitter --version" "tmux -V"; do
-      printf '%-12s %s\n' "${cmd%% *}" "$($cmd | head -1)"
+      out=$($cmd)  # an assignment, so set -e stops on a tool that fails
+      printf '%-12s %s\n' "${cmd%% *}" "${out%%$'\n'*}"
     done
   args:
     executable: /bin/bash
@@ -25,7 +28,7 @@
   ansible.builtin.stat:
     path: "{{ home }}/{{ item.dest }}"
     follow: false
-  loop: "{{ dotfile_links }}"
+  loop: "{{ all_dotfile_links }}"
   loop_control:
     label: "~/{{ item.dest }}"
   register: links

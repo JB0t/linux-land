@@ -37,3 +37,18 @@ jobs:
         run: |
           sudo -iu tester /home/tester/linux-land/setup.sh | tee second-run.log
           grep -Eq 'changed=0 +unreachable=0 +failed=0' second-run.log
+
+  macos:
+    # GitHub's macOS runner (Apple silicon) already has Homebrew, the Command
+    # Line Tools and passwordless sudo, so setup.sh starts at the playbook.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: First run
+        run: ./setup.sh
+
+      - name: Second run changes nothing
+        run: |
+          ./setup.sh | tee second-run.log
+          grep -Eq 'changed=0 +unreachable=0 +failed=0' second-run.log

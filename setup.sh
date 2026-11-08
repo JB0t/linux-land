@@ -8,10 +8,11 @@
 #
 #   ./setup.sh                  # everything
 #   ./setup.sh --check --diff   # show what would change, change nothing
-#   ./setup.sh --tags dotfiles  # one part: packages, tools, dotfiles, tmux, nvim, verify
+#   ./setup.sh --tags dotfiles  # one part: packages, tools, dotfiles, tmux, terminal, nvim, verify
 #   ./setup.sh -e notes_dir=~/work/notes   # override a value from group_vars/all.yml
 #   ./setup.sh -i 10.5.0.15, -u jb0t       # set up another machine (no checkout there)
 #
+# Works on Ubuntu (apt) and macOS (Homebrew, installed here if missing).
 # Any arguments are passed to ansible-playbook.
 set -euo pipefail
 
@@ -31,10 +32,29 @@ for arg in "$@"; do
     case "$arg" in -i|-i*|--inventory|--inventory=*) remote=true ;; esac
 done
 
-# Ansible's apt module runs under the system python3 with python3-apt.
-# Ubuntu desktop and server images have both; minimal images may not (on
-# another machine, install them there first).
-if ! $remote && ! /usr/bin/python3 -c 'import apt' 2>/dev/null; then
+# Ask for the sudo password only when sudo would need one. Sudo here says
+# nothing about another machine (-i), so add --ask-become-pass yourself if
+# its sudo needs a password. Checked before anything below runs sudo, so a
+# password typed there doesn't hide that Ansible's sudo will need one.
+become_args=()
+if ! $remote && ! sudo -n true 2>/dev/null; then
+    become_args=(--ask-become-pass)
+fi
+
+if ! $remote && [ "$(uname -s)" = Darwin ]; then
+    # macOS: Homebrew, whose installer also brings the Xcode Command Line
+    # Tools and so /usr/bin/python3 for Ansible (on another Mac, install
+    # Homebrew there first)
+    if [ ! -x /opt/homebrew/bin/brew ] && [ ! -x /usr/local/bin/brew ]; then
+        echo "Installing Homebrew (asks for your password)..."
+        sudo -v
+        NONINTERACTIVE=1 /bin/bash -c \
+            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+elif ! $remote && ! /usr/bin/python3 -c 'import apt' 2>/dev/null; then
+    # Ansible's apt module runs under the system python3 with python3-apt.
+    # Ubuntu desktop and server images have both; minimal images may not (on
+    # another machine, install them there first).
     echo "Installing python3 and python3-apt (needed by Ansible's apt module)..."
     sudo apt-get update -qq
     sudo apt-get install -y -qq python3 python3-apt
@@ -51,14 +71,7 @@ if [ -z "$uv" ]; then
     fi
 fi
 
-# Ask for the sudo password only when sudo would need one. Sudo here says
-# nothing about another machine (-i), so add --ask-become-pass yourself if
-# its sudo needs a password.
-become_args=()
-if ! $remote && ! sudo -n true 2>/dev/null; then
-    become_args=(--ask-become-pass)
-fi
-
 export ANSIBLE_CONFIG="$repo_dir/ansible/ansible.cfg"
+# ${a[@]+...}: macOS's bash 3.2 calls an empty array unbound under set -u
 exec "$uv" tool run --quiet --from "$ANSIBLE_CORE_SPEC" \
-    ansible-playbook "$repo_dir/ansible/site.yml" "${become_args[@]}" "$@"
+    ansible-playbook "$repo_dir/ansible/site.yml" ${become_args[@]+"${become_args[@]}"} "$@"

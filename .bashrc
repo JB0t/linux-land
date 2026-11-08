@@ -3,9 +3,23 @@
 # Anything specific to one machine goes in ~/.bash_extras (not tracked).
 
 # PATH
+# macOS: Homebrew, then GNU coreutils, find, sed, grep and tar ahead of the
+# BSD ones, so bash_additions and tx behave the same as on Linux
+case "$OSTYPE" in
+darwin*)
+    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        [ -x "$b" ] && eval "$("$b" shellenv)" && break
+    done
+    for p in coreutils findutils gnu-sed grep gnu-tar; do
+        d="$HOMEBREW_PREFIX/opt/$p/libexec/gnubin"
+        [ -d "$d" ] && export PATH="$d:$PATH"
+    done
+    unset b p d
+    ;;
+esac
 export GOPATH=$HOME/go
 export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
-for d in /opt/nvim-linux-x86_64/bin /opt/nvim-linux-arm64/bin; do
+for d in /opt/nvim-linux-x86_64/bin /opt/nvim-linux-arm64/bin /opt/nvim-macos-arm64/bin /opt/nvim-macos-x86_64/bin; do
     if [ -d "$d" ]; then
         export NVIM_BIN="$d"
         export PATH="$PATH:$NVIM_BIN"
@@ -56,7 +70,7 @@ xterm*|rxvt*)
 esac
 
 # enable color support of ls and also add handy aliases
-if [ -x /usr/bin/dircolors ]; then
+if command -v dircolors >/dev/null; then
     test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
     alias ls='ls --color=auto'
     alias grep='grep --color=auto'
@@ -75,6 +89,8 @@ if ! shopt -oq posix; then
     . /usr/share/bash-completion/bash_completion
   elif [ -f /etc/bash_completion ]; then
     . /etc/bash_completion
+  elif [ -f "${HOMEBREW_PREFIX:-}/etc/profile.d/bash_completion.sh" ]; then
+    . "$HOMEBREW_PREFIX/etc/profile.d/bash_completion.sh"
   fi
 fi
 
@@ -93,6 +109,14 @@ export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
 
 [ -f ~/.fzf.bash ] && source ~/.fzf.bash
+
+# SSH agent: reuse one this shell can reach (tmux pane, ssh -A), else start
+# one; load every private key under ~/.ssh when the agent holds none
+if command -v ssh-agent >/dev/null && [ -d ~/.ssh ]; then
+    ssh-add -l >/dev/null 2>&1
+    [ $? -eq 2 ] && eval "$(ssh-agent -s)" >/dev/null
+    ssh-add -l >/dev/null 2>&1 || grep -slR "PRIVATE KEY" ~/.ssh/ | xargs -r ssh-add 2>/dev/null
+fi
 
 # Injections: per-machine aliases and settings, then linux-land functions
 [ -f ~/.bash_aliases ] && source ~/.bash_aliases
