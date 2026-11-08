@@ -1,0 +1,159 @@
+---
+# WSL: the Nerd Font installed for the Windows user, and Windows Terminal's
+# profile for this distro set up like the GNOME Terminal profile on Linux
+# (windows_terminal_* in group_vars/all.yml). Goes through /mnt/c and
+# powershell.exe, so it needs WSL's Windows interop (on by default).
+- name: Find this distro's name
+  # wslpath -w / is \\wsl.localhost\<distro>\ (WSL_DISTRO_NAME isn't set over SSH)
+  ansible.builtin.shell: basename "$(wslpath -w / | tr '\\' /)"
+  args:
+    executable: /bin/bash
+  register: wsl_distro
+  changed_when: false
+  check_mode: false
+
+- name: Read the distro's package and the Windows user's LOCALAPPDATA
+  vars:
+    script: |
+      $d = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' |
+          Get-ItemProperty | Where-Object DistributionName -eq '{{ wsl_distro.stdout | trim }}'
+      [pscustomobject]@{
+          package = [string]$d.PackageFamilyName
+          localappdata = $env:LOCALAPPDATA
+      } | ConvertTo-Json -Compress
+  ansible.builtin.command:
+    argv:
+      - "{{ windows_powershell }}"
+      - -NoProfile
+      - -NonInteractive
+      - -EncodedCommand
+      - "{{ script | b64encode(encoding='utf-16-le') }}"
+  register: wsl_windows_info
+  changed_when: false
+  check_mode: false
+
+- name: Find the Windows user's LOCALAPPDATA from here
+  ansible.builtin.command:
+    argv: [wslpath, -u, "{{ (wsl_windows_info.stdout | trim | from_json).localappdata }}"]
+  register: wsl_localappdata
+  changed_when: false
+  check_mode: false
+
+- name: Work out the Windows paths
+  vars:
+    info: "{{ wsl_windows_info.stdout | trim | from_json }}"
+  ansible.builtin.set_fact:
+    wsl_distro_name: "{{ wsl_distro.stdout | trim }}"
+    wsl_distro_package: "{{ info.package }}"
+    windows_font_dir: "{{ wsl_localappdata.stdout | trim }}/Microsoft/Windows/Fonts"
+    windows_terminal_settings_file: "{{ wsl_localappdata.stdout | trim }}/{{ windows_terminal_settings_path }}"
+
+# Per user, as prepare-wsl.ps1 -NerdFont does; a font installed for all
+# users (C:\Windows\Fonts) counts too
+- name: Look for the {{ windows_terminal_nerd_font }} Nerd Font on Windows
+  ansible.builtin.find:
+    paths:
+      - "{{ windows_font_dir }}"
+      - /mnt/c/Windows/Fonts
+    patterns: "{{ windows_terminal_nerd_font }}NerdFont-*.ttf"
+  register: windows_nerd_font
+
+- name: Install the {{ windows_terminal_nerd_font }} Nerd Font for the Windows user
+  when: windows_nerd_font.matched == 0
+  vars:
+    font: "{{ windows_terminal_nerd_font }}"
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $ProgressPreference = 'SilentlyContinue'
+      $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+      $zip = Join-Path $env:TEMP '{{ font }}.zip'
+      $unpacked = Join-Path $env:TEMP '{{ font }}-nerd-font'
+      Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/{{ font }}.zip' -OutFile $zip
+      Expand-Archive -Path $zip -DestinationPath $unpacked -Force
+      New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
+      $fontsKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+      Get-ChildItem -Path $unpacked -Include *.ttf, *.otf -Recurse | ForEach-Object {
+          $target = Join-Path $fontDir $_.Name
+          Copy-Item $_.FullName $target -Force
+          New-ItemProperty -Path $fontsKey -Name "$($_.BaseName) (TrueType)" -Value $target -PropertyType String -Force | Out-Null
+      }
+      Remove-Item $zip, $unpacked -Recurse -Force
+  ansible.builtin.command:
+    argv:
+      - "{{ windows_powershell }}"
+      - -NoProfile
+      - -NonInteractive
+      - -EncodedCommand
+      - "{{ script | b64encode(encoding='utf-16-le') }}"
+
+- name: Read Windows Terminal's settings
+  ansible.builtin.slurp:
+    src: "{{ windows_terminal_settings_file }}"
+  register: windows_terminal_slurp
+
+# Windows Terminal writes plain JSON; one edited by hand may have comments,
+# which from_json can't read
+- name: Parse Windows Terminal's settings
+  block:
+    - name: Parse Windows Terminal's settings
+      ansible.builtin.set_fact:
+        windows_terminal_current: "{{ windows_terminal_slurp.content | b64decode | regex_replace('^\ufeff', '') | from_json }}"
+  rescue:
+    - name: Explain why the settings can't be read
+      ansible.builtin.fail:
+        msg: >-
+          {{ windows_terminal_settings_file }} isn't plain JSON (comments or trailing
+          commas?). Remove those, or set the profile up by hand, and re-run.
+
+# The profile: windows_terminal_profile (a name or guid) if set, else the
+# one Windows Terminal made for this distro: its Store package's profile, or
+# the Windows.Terminal.Wsl one named after it
+- name: Find this distro's Windows Terminal profile
+  vars:
+    profiles: "{{ windows_terminal_current.profiles.list | default([]) }}"
+    by_package: "{{ profiles | selectattr('source', 'defined') | selectattr('source', 'eq', wsl_distro_package) | list if wsl_distro_package else [] }}"
+    by_name: "{{ profiles | selectattr('source', 'defined') | selectattr('source', 'eq', 'Windows.Terminal.Wsl') | selectattr('name', 'eq', wsl_distro_name) | list }}"
+    chosen: >-
+      {{ (profiles | selectattr('name', 'eq', windows_terminal_profile) | list)
+         + (profiles | selectattr('guid', 'eq', windows_terminal_profile) | list)
+         if windows_terminal_profile else by_package + by_name }}
+  ansible.builtin.set_fact:
+    windows_terminal_guid: "{{ chosen[0].guid if chosen | length > 0 else '' }}"
+
+- name: Check there's a profile to change
+  ansible.builtin.assert:
+    that: windows_terminal_guid != ''
+    fail_msg: >-
+      No Windows Terminal profile for {{ windows_terminal_profile or wsl_distro_name }} in
+      {{ windows_terminal_settings_file }}. Open Windows Terminal once (it adds a profile
+      per distro), or set windows_terminal_profile to a profile's name or guid.
+    quiet: true
+
+# Only that profile's keys in windows_terminal_profile_settings change;
+# everything else in the file is kept
+- name: Write Windows Terminal's settings
+  vars:
+    updates: >-
+      {{ windows_terminal_profile_settings | combine({'commandline':
+         'wsl.exe -d ' ~ wsl_distro_name ~ ' --cd ~ -e bash -lc ' ~ windows_terminal_command}) }}
+    profiles: >-
+      {%- set out = [] -%}
+      {%- for p in windows_terminal_current.profiles.list -%}
+      {%- set _ = out.append(p | combine(updates) if p.guid == windows_terminal_guid else p) -%}
+      {%- endfor -%}
+      {{ out }}
+    wanted: "{{ windows_terminal_current | combine({'profiles': {'list': profiles}}, recursive=true) }}"
+  when: wanted != windows_terminal_current
+  ansible.builtin.copy:
+    content: "{{ wanted | to_nice_json(indent=4, sort_keys=false) }}\n"
+    dest: "{{ windows_terminal_settings_file }}"
+    backup: true
+  register: windows_terminal_written
+
+- name: Report the Windows Terminal change
+  when: windows_terminal_written is changed
+  ansible.builtin.debug:
+    msg: >-
+      Windows Terminal's profile for {{ wsl_distro_name }} changed (old settings kept next to
+      {{ windows_terminal_settings_file | basename }}). Open windows pick it up straight away;
+      {{ 'restart Windows Terminal to see the newly installed font.' if windows_nerd_font.matched == 0 else '' }}

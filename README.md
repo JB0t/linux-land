@@ -104,7 +104,7 @@ Homebrew there first.
 | `tools` | Neovim into `/opt`, Go into `/usr/local/go`, yq, fzf (`~/.fzf`), nvm + Node LTS, tree-sitter-cli, `~/.git-prompt.sh` |
 | `dotfiles` | symlinks `.bashrc`, `.bash_additions`, `bash_additions`, `.tmux.conf`, tx's opts and `nvim` into `$HOME`; seeds per-machine files |
 | `tmux` | tpm and the plugins listed in `.tmux.conf` |
-| `terminal` | macOS only: Ghostty, its config and font, and the Ctrl+Space shortcut turned off |
+| `terminal` | macOS: Ghostty, its config and font, and the Ctrl+Space shortcut turned off. WSL: the Nerd Font installed on Windows and Windows Terminal's profile for the distro set up the same way |
 | `nvim` | plugins at the commits in `nvim/lazy-lock.json`, Mason LSP servers and delve, treesitter parsers |
 | `verify` | checks every tool runs, links point here (or into the copy), a new shell loads, and nvim starts with treesitter active |
 
@@ -115,6 +115,24 @@ arm64) and WSL are detected from the host.
 
 Anything already at a path setup wants to link is moved aside to
 `<path>.bak.<timestamp>` first, never overwritten.
+
+### Windows Terminal (WSL)
+
+On WSL the `terminal` role also sets up the Windows side, through `/mnt/c`
+and `powershell.exe`:
+
+- The `windows_terminal_nerd_font` Nerd Font (JetBrainsMono) installed for
+  the Windows user, as `prepare-wsl.ps1 -NerdFont` does, if it isn't there.
+- Windows Terminal's profile for this distro (found from the distro's name,
+  or `-e windows_terminal_profile=NAME`) set like the GNOME Terminal profile:
+  JetBrainsMono Nerd Font 12, white on black at 72% opacity, no bell, and
+  tmux in a login bash. Only the keys in `windows_terminal_profile_settings`
+  change; the rest of `settings.json` is kept, and the old file is backed up
+  next to it. Windows Terminal has no bold colour or per-profile cursor blink
+  setting, so those two differ from GNOME.
+
+Windows Terminal reloads `settings.json` by itself; restart it after the
+font is first installed.
 
 ### Another machine, from here
 

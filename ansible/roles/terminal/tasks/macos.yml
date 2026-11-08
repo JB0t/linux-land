@@ -1,0 +1,59 @@
+---
+# macOS: Ghostty set up like the GNOME Terminal profile on Linux
+# (ghostty_config in group_vars/all.yml), and the Ctrl+Space shortcut that
+# would swallow tmux's prefix turned off.
+- name: List installed Homebrew casks
+  ansible.builtin.command: brew list --cask -1
+  register: casks_installed
+  changed_when: false
+  check_mode: false
+
+- name: Install Ghostty and its font
+  vars:
+    missing: "{{ terminal_casks | reject('in', casks_installed.stdout_lines) | list }}"
+  when: missing | length > 0
+  ansible.builtin.command:
+    argv: "{{ ['brew', 'install', '--cask'] + missing }}"
+
+# No mode: an existing dir keeps its permissions
+- name: Create ~/.config/ghostty
+  ansible.builtin.file:  # noqa: risky-file-permissions
+    path: "{{ home }}/.config/ghostty"
+    state: directory
+
+- name: Write Ghostty's config
+  ansible.builtin.template:
+    src: ghostty.j2
+    dest: "{{ home }}/.config/ghostty/config"
+    mode: "0644"
+    validate: /Applications/Ghostty.app/Contents/MacOS/ghostty +validate-config --config-file=%s
+  register: ghostty_written
+
+- name: Report the Ghostty change
+  when: ghostty_written is changed
+  ansible.builtin.debug:
+    msg: Ghostty's config changed; open windows pick it up after Cmd+Shift+, (reload config) or a restart.
+
+# macOS's "Select the previous input source" shortcut (id 60) is Ctrl+Space
+- name: Read the Ctrl+Space input source shortcut
+  ansible.builtin.command: >-
+    /usr/libexec/PlistBuddy -c "Print :AppleSymbolicHotKeys:60:enabled"
+    {{ home }}/Library/Preferences/com.apple.symbolichotkeys.plist
+  register: input_source_hotkey
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# activateSettings makes the running session reload its shortcuts
+- name: Turn off the Ctrl+Space input source shortcut
+  when: input_source_hotkey.stdout | trim not in ['false', '0']
+  ansible.builtin.shell: |
+    defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 60 '
+      <dict>
+        <key>enabled</key><false/>
+        <key>value</key><dict>
+          <key>parameters</key><array><integer>32</integer><integer>49</integer><integer>262144</integer></array>
+          <key>type</key><string>standard</string>
+        </dict>
+      </dict>'
+    /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u

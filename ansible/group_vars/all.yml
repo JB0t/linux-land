@@ -81,6 +81,24 @@ terminal_casks:
   - ghostty
   - font-jetbrains-mono-nerd-font
 
+# WSL: Windows Terminal's profile for this distro, set by the terminal role
+# to match the GNOME Terminal profile on the Linux machines. Windows
+# Terminal has no setting for a bold colour or (per profile) cursor blink.
+windows_terminal_profile: ""       # a profile name or guid; "" = the one for this distro
+windows_terminal_nerd_font: JetBrainsMono   # a ryanoasis/nerd-fonts release zip, installed for the Windows user
+windows_terminal_profile_settings:  # keys of a profile in settings.json
+  font:
+    face: JetBrainsMono Nerd Font
+    size: 12
+  background: "#000000"
+  foreground: "#FFFFFF"
+  opacity: 72                      # GNOME's 28% transparency
+  useAcrylic: false
+  bellStyle: none
+  intenseTextStyle: bold
+windows_terminal_command: tmux     # run by a login bash in the distro
+windows_terminal_settings_path: Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json  # under LOCALAPPDATA
+windows_powershell: /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
 
 # Files and dirs in this repo (or its copy), symlinked into $HOME
 dotfile_links:

@@ -114,13 +114,42 @@
   check_mode: false
   when: fzf_version == 'latest'
 
-- name: Check out fzf
-  ansible.builtin.git:
-    repo: https://github.com/junegunn/fzf.git
-    dest: "{{ home }}/.fzf"
-    version: "{{ fzf_latest.url | basename if fzf_version == 'latest' else fzf_version }}"
-    depth: 1
+- name: Work out the fzf release
+  ansible.builtin.set_fact:
+    fzf_tag: "{{ fzf_latest.url | basename if fzf_version == 'latest' else fzf_version }}"
+
+- name: Read the checked-out fzf release
+  ansible.builtin.command: git -C {{ (home ~ '/.fzf') | quote }} describe --tags --exact-match
+  register: fzf_checked_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Plain git, not the git module: on a shallow clone of a tag (which is what
+# the module makes) with a detached HEAD and no refs/remotes/origin/HEAD, its
+# update fails with "'NoneType' object has no attribute 'startswith'"
+- name: Check out fzf {{ fzf_tag }}
+  when: fzf_checked_out.stdout | trim != fzf_tag
+  ansible.builtin.shell: |
+    set -eu
+    dir={{ (home ~ '/.fzf') | quote }}
+    tag={{ fzf_tag | quote }}
+    if [ -d "$dir/.git" ]; then
+        git -C "$dir" fetch --quiet --depth 1 origin "+refs/tags/$tag:refs/tags/$tag"
+        git -C "$dir" checkout --quiet --detach "refs/tags/$tag"
+    else
+        git clone --quiet --depth 1 --branch "$tag" https://github.com/junegunn/fzf.git "$dir"
+    fi
   register: fzf_repo
+
+# The shell task above is skipped under --check; say what it would do
+- name: Report the fzf checkout --check skipped
+  when:
+    - ansible_check_mode
+    - fzf_checked_out.stdout | trim != fzf_tag
+  ansible.builtin.debug:
+    msg: "fzf would go from {{ fzf_checked_out.stdout | trim or 'nothing' }} to {{ fzf_tag }}"
+  changed_when: true
 
 - name: Check for the fzf binary
   ansible.builtin.stat:

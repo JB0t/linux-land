@@ -146,6 +146,6 @@
     - { role: tools, tags: [tools] }
     - { role: dotfiles, tags: [dotfiles] }
     - { role: tmux, tags: [tmux] }
-    - { role: terminal, tags: [terminal], when: is_macos }
+    - { role: terminal, tags: [terminal], when: is_macos or is_wsl }
     - { role: nvim, tags: [nvim] }
     - { role: verify, tags: [verify] }
