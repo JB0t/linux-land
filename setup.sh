@@ -10,7 +10,7 @@
 #   ./setup.sh --check --diff   # show what would change, change nothing
 #   ./setup.sh --tags dotfiles  # one part: packages, tools, dotfiles, tmux, terminal, nvim, verify
 #   ./setup.sh -e notes_dir=~/work/notes   # override a value from group_vars/all.yml
-#   ./setup.sh -i 10.5.0.15, -u jb0t       # set up another machine (no checkout there)
+#   ./setup.sh -i 192.0.2.10, -u jb0t      # set up another machine (no checkout there)
 #
 # Works on Ubuntu (apt) and macOS (Homebrew, installed here if missing).
 # Any arguments are passed to ansible-playbook.
