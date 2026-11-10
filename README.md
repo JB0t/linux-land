@@ -168,6 +168,14 @@ These are seeded once if missing and never overwritten, so edit them freely:
 
 Don't install `luarocks` system-wide; nothing here uses rocks.
 
+## Notes
+
+Dated Markdown notes (`$NOTES_DIR/YYYY/MM/DD/`), found with fzf and ripgrep,
+edited in Neovim, kept open in a tmux session, and pushed to tasks only when
+you choose to. Layout, daily flows (`nvnotes`, `cdnotes` + Ctrl+T,
+`searchnotes` from anywhere), sync and the clctl integration are in
+[docs/notes.md](docs/notes.md).
+
 ## Put thing in here
 
 ```bash
