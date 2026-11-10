@@ -140,7 +140,7 @@ The target needs no checkout and no GitHub access, only SSH from here (as a
 user with sudo), `python3` with `python3-apt`, and `git` for a `--check` run:
 
 ```bash
-./setup.sh -i 10.5.0.15, -u jb0t          # trailing comma: a host, not an inventory file
+./setup.sh -i 192.0.2.10, -u jb0t         # trailing comma: a host, not an inventory file
 ./setup.sh -i host, -u me --ask-become-pass   # if sudo there needs a password
 ```
 
