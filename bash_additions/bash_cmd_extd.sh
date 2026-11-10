@@ -3,11 +3,22 @@
 # Requires: nvim, $NVIM_BIN, xclip (pbcopy/pbpaste on macOS)
 
 alias dirsize='du -h --max-depth=1 | sort -hr'
-if [[ "$OSTYPE" == darwin* ]]; then
-    alias copy="perl -pe 'chomp if eof' | pbcopy"
-else
-    alias copy='xclip -sel clip -r'
-fi
+# copy: stdin to the clipboard, minus the trailing newline. pbcopy on macOS, xclip
+# when there is an X display. Without one (over SSH) an OSC 52 escape asks the
+# terminal to do it: through tmux when inside it, so it passes nested tmux and
+# reaches the clipboard of the machine you are typing on.
+unalias copy 2>/dev/null
+copy() {
+    if [[ "$OSTYPE" == darwin* ]]; then
+        perl -pe 'chomp if eof' | pbcopy
+    elif [[ -n "${DISPLAY:-}" ]]; then
+        xclip -sel clip -r
+    elif [[ -n "${TMUX:-}" ]]; then
+        perl -pe 'chomp if eof' | tmux load-buffer -w -
+    else
+        printf '\e]52;c;%s\a' "$(perl -pe 'chomp if eof' | base64 -w0)" > /dev/tty
+    fi
+}
 
 # clip_text: the clipboard as text. On macOS pbpaste reads it. Elsewhere xclip reads
 # X's clipboard (on WSL, WSLg keeps it in step with Windows'); when that is empty or

@@ -29,3 +29,19 @@ vim.opt.isfname:append("@-@")
 vim.opt.updatetime = 50
 
 vim.opt.colorcolumn = "80"
+
+-- Over SSH there is no X display, so xclip cannot reach a clipboard. Send "+y and
+-- "*y out as OSC 52 instead: tmux passes it to the terminal you are typing on.
+-- Few terminals answer OSC 52 reads (Windows Terminal does not), so "+p pastes
+-- nvim's last yank; paste from the outer machine with the terminal's paste key.
+if not vim.env.DISPLAY and not vim.env.WAYLAND_DISPLAY and vim.fn.has("mac") == 0 then
+    local osc52 = require("vim.ui.clipboard.osc52")
+    local function paste()
+        return { vim.fn.split(vim.fn.getreg(""), "\n"), vim.fn.getregtype("") }
+    end
+    vim.g.clipboard = {
+        name = "OSC 52",
+        copy = { ["+"] = osc52.copy("+"), ["*"] = osc52.copy("*") },
+        paste = { ["+"] = paste, ["*"] = paste },
+    }
+end
