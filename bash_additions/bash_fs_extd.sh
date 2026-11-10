@@ -78,6 +78,6 @@ searchdir() {
         --preview-window 'right,60%') || return
     file=$(cut -d: -f1 <<<"$selection")
     line=$(cut -d: -f2 <<<"$selection")
-    "${NVIM_BIN:-nvim}" "+$line" "$PWD/$file"
+    nvim "+$line" "$PWD/$file"
 }
 

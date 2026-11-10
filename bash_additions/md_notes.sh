@@ -66,7 +66,7 @@ opennotes() {
 }
 
 nvnotes() {
-    opennotes "$NVIM_BIN" "${1:-}"
+    opennotes nvim "${1:-}"
 }
 
 codenotes() {
@@ -82,7 +82,7 @@ notegrep() {
     fi
 }
 
-# Live content search over $NOTES_DIR (like telescope live_grep), opens the match in $NVIM_BIN.
+# Live content search over $NOTES_DIR (like telescope live_grep), opens the match in nvim.
 # clctl's task workspaces (YYYY/MM/DD/workspaces/) only hold symlinks to notes found
 # elsewhere, so they are skipped: with --follow every linked note would match twice.
 searchnotes() {
@@ -100,5 +100,5 @@ searchnotes() {
         --preview-window 'right,60%') || return
     file=$(cut -d: -f1 <<<"$selection")
     line=$(cut -d: -f2 <<<"$selection")
-    "${NVIM_BIN:-nvim}" "+$line" "$NOTES_DIR/$file"
+    nvim "+$line" "$NOTES_DIR/$file"
 }
